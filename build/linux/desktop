@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A prompt-manager application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/prompt-manager %u
+Terminal=false
+Type=Application
+Icon=prompt-manager
+Categories=Utility;
+StartupWMClass=prompt-manager
+
+ 

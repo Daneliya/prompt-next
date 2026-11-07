@@ -1,0 +1,8 @@
+{
+  "source": "synthetic compatibility fixture",
+  "total": 2,
+  "items": [
+    {"id": "example", "title": "故事角色", "prompt": "你是一位虚构故事中的向导。", "category": "roleplay"},
+    {"id": "empty", "title": "空条目", "prompt": ""}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "{{APP_VERSION}}"
+	},
+	"info": {
+		"0409": {
+			"ProductVersion": "{{APP_VERSION}}",
+			"CompanyName": "Daneliya",
+			"FileDescription": "A prompt-manager application",
+			"LegalCopyright": "© 2026, Daneliya",
+			"ProductName": "Prompt Next",
+			"Comments": "This is a comment"
+		}
+	}
+}
