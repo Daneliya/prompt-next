@@ -128,30 +128,33 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 		t.Fatalf("legacy model was not loaded: %+v", legacy)
 	}
 
-	if err := dest.AddModel("Studio Custom"); err != nil {
+	if err := dest.AddModel("art", "Studio Custom"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dest.AddModel("studio custom"); err == nil {
+	if err := dest.AddModel("art", "studio custom"); err == nil {
 		t.Fatal("duplicate model was accepted")
 	}
-	models, err := dest.Models()
+	catalog, err := dest.Models("art")
+	models := append(slices.Clone(catalog.BuiltIn), catalog.Custom...)
 	if err != nil || models[len(models)-1] != "Studio Custom" {
 		t.Fatalf("models: %+v, %v", models, err)
 	}
-	if err := dest.RenameModel("Studio Custom", "Studio Next"); err != nil {
+	if err := dest.RenameModel("art", "Studio Custom", "Studio Next"); err != nil {
 		t.Fatal(err)
 	}
-	if len(models) < 6 || !slices.Equal(models[:6], []string{"Midjourney V6", "Midjourney V8.2", "GPT Image 2.0", "GPT Image 2.5", "Nano Banana 2", "Nano Banana 2.1"}) {
-		t.Fatalf("versioned models: %v", models)
+	for _, model := range []string{"Midjourney V6", "Midjourney V8.2", "GPT Image 2.0", "GPT Image 2.5", "GPT Image 2.6", "Muse Image", "Nano Banana 2", "Nano Banana 2.1"} {
+		if !slices.Contains(catalog.BuiltIn, model) {
+			t.Fatalf("missing built-in image model %q", model)
+		}
 	}
-	if err := dest.DeleteModel("Midjourney V6"); err == nil {
+	if err := dest.DeleteModel("art", "Midjourney V6"); err == nil {
 		t.Fatal("built-in model was deleted")
 	}
-	if err := dest.DeleteModel("Studio Next"); err != nil {
+	if err := dest.DeleteModel("art", "Studio Next"); err != nil {
 		t.Fatal(err)
 	}
-	if custom, err := dest.CustomModels(); err != nil || len(custom) != 0 {
-		t.Fatalf("custom models: %+v, %v", custom, err)
+	if catalog, err := dest.Models("art"); err != nil || len(catalog.Custom) != 0 {
+		t.Fatalf("custom models: %+v, %v", catalog.Custom, err)
 	}
 	if err := dest.AddCategory("art", "工作测试"); err != nil {
 		t.Fatal(err)

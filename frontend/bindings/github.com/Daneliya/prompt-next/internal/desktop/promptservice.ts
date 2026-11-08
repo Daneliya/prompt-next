@@ -17,8 +17,8 @@ export function AddCategory(kind: string, name: string): $CancellablePromise<voi
     return $Call.ByID(65450539, kind, name);
 }
 
-export function AddModel(name: string): $CancellablePromise<void> {
-    return $Call.ByID(1003104052, name);
+export function AddModel(kind: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(1003104052, kind, name);
 }
 
 export function AppInfo(): $CancellablePromise<$models.AppMetadata> {
@@ -69,10 +69,6 @@ export function CustomCategories(kind: string): $CancellablePromise<string[] | n
     return $Call.ByID(245176603, kind);
 }
 
-export function CustomModels(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(3479766037);
-}
-
 export function DeleteCategory(kind: string, name: string): $CancellablePromise<void> {
     return $Call.ByID(2109758107, kind, name);
 }
@@ -81,8 +77,8 @@ export function DeleteCollection(id: string): $CancellablePromise<void> {
     return $Call.ByID(2565942439, id);
 }
 
-export function DeleteModel(name: string): $CancellablePromise<void> {
-    return $Call.ByID(793281444, name);
+export function DeleteModel(kind: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(793281444, kind, name);
 }
 
 export function DeletePrompt(id: string): $CancellablePromise<void> {
@@ -161,8 +157,12 @@ export function ListUnreferencedImages(): $CancellablePromise<library$0.OrphanIm
     return $Call.ByID(2173059642);
 }
 
-export function Models(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(305560062);
+export function MemoryUsage(): $CancellablePromise<$models.MemoryUsage> {
+    return $Call.ByID(1405999806);
+}
+
+export function Models(kind: string): $CancellablePromise<library$0.ModelCatalog> {
+    return $Call.ByID(305560062, kind);
 }
 
 export function OpenDataFolder(): $CancellablePromise<void> {
@@ -189,8 +189,8 @@ export function RenameCategory(kind: string, current: string, name: string): $Ca
     return $Call.ByID(2038032006, kind, current, name);
 }
 
-export function RenameModel(current: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(1216654459, current, name);
+export function RenameModel(kind: string, current: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(1216654459, kind, current, name);
 }
 
 export function RenameTag(kind: string, current: string, name: string): $CancellablePromise<void> {

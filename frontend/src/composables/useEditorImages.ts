@@ -80,8 +80,8 @@ export function useEditorImages(busy: Ref<boolean>, showImageError: (message: st
     const all = [...draftImages.value, ...otherImages()]
     const batchSize = all.reduce((sum, item) => sum + (item.file?.size ?? 0), 0) +
       files.reduce((sum, file) => sum + file.size, 0)
-    if (all.length + files.length > 24 || batchSize > 80 * 1024 * 1024) {
-      showImageError(t('每条最多 24 张图片，每次保存的新图片合计须在 80 MB 以内'))
+    if (all.length + files.length > 48 || batchSize > 80 * 1024 * 1024) {
+      showImageError(t('每条最多 48 张图片，每次保存的新图片合计须在 80 MB 以内'))
       return
     }
     draftImages.value.push(...files.map((file) => ({ name: '', file, url: URL.createObjectURL(file) })))

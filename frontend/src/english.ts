@@ -167,7 +167,7 @@ export const english: Record<string, string> = {
   "输入模型名称": "Enter a model name",
   "模型名称": "Model Name",
   "添加": "Add",
-  "添加后可在绘画条目的模型下拉框中选择。": "Added models appear in the image prompt model picker.",
+  "添加后可在所选提示词库的模型下拉框中使用。": "Added models appear in the selected library’s model picker.",
   "自定义模型": "Custom Models",
   "修改和删除只影响下拉选项，已有提示词中的模型名称仍保留。": "Changes affect picker options. Existing prompts retain their model names.",
   "还没有自定义模型": "No custom models yet",
@@ -339,7 +339,7 @@ export const english: Record<string, string> = {
   "输入补充说明（选填）": "Enter additional notes (optional)",
   "读取图片失败": "Could not read the image",
   "每张图片须在 12 MB 以内": "Each image must be 12 MB or smaller",
-  "每条最多 24 张图片，每次保存的新图片合计须在 80 MB 以内": "Limit 24 images per prompt and 80 MB of new images per save",
+  "每条最多 48 张图片，每次保存的新图片合计须在 80 MB 以内": "Limit 48 images per prompt and 80 MB of new images per save",
   "，跳过 {0} 条已移出回收站的提示词": ", skipping {0} prompts already removed from Trash",
   "，跳过 {0} 张": ", skipped {0} images",
   "恢复选中（{0}）": "Restore Selected ({0})",
@@ -374,5 +374,8 @@ export const english: Record<string, string> = {
   "放大": "Zoom In",
   "缩小": "Zoom Out",
   "下载原图": "Download Original",
-  "原图已保存": "Original image saved"
+  "原图已保存": "Original image saved",
+  "应用内存": "App memory",
+  "系统总内存": "Total RAM",
+  "应用主进程占用与系统物理内存总量，每 5 秒刷新": "Main process memory and total physical RAM, refreshed every 5 seconds"
 }

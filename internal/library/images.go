@@ -270,8 +270,8 @@ func (s *Service) saveOrderedMedia(prompt Prompt, attachments []ImageInput, sour
 	if err := prompt.validate(); err != nil {
 		return Prompt{}, err
 	}
-	if len(attachments) > 24 || (!supportsMedia(prompt.Kind) && len(attachments) != 0) {
-		return Prompt{}, errors.New("绘画和视频条目最多可附加 24 张图片")
+	if len(attachments) > 48 || (!supportsMedia(prompt.Kind) && len(attachments) != 0) {
+		return Prompt{}, errors.New("绘画和视频条目最多可附加 48 张图片")
 	}
 	files := make(map[string][]byte)
 	sources := make(map[string]int64)

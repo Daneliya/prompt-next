@@ -20,3 +20,8 @@ export interface ChosenVideo {
     "name": string;
     "bytes": number;
 }
+
+export interface MemoryUsage {
+    "appBytes": number;
+    "totalBytes": number;
+}

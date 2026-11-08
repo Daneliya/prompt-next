@@ -83,11 +83,25 @@ const layoutLabel = computed(() => t(layoutOptions.find(option => option.value =
 const visibleFields = computed(() => new Set(currentFields.value))
 const writtenLibrary = computed(() => kind.value === 'text' || kind.value === 'persona')
 
-const models = ref<string[]>([])
-const customModels = ref<string[]>([])
+type ModelKind = 'art' | 'video'
+type ModelCatalog = Awaited<ReturnType<typeof PromptService.Models>>
+const modelCatalogs = ref<Partial<Record<ModelKind, ModelCatalog>>>({})
+const settingsModelKind = ref<ModelKind>('art')
+const settingsModels = computed(() => modelCatalogs.value[settingsModelKind.value])
+const customModels = computed(() => settingsModels.value?.custom ?? [])
+
+function modelsFor(library: string) {
+  const catalog = library === 'art' || library === 'video' ? modelCatalogs.value[library] : undefined
+  return [...(catalog?.builtIn ?? []), ...(catalog?.custom ?? [])]
+}
 const newModel = ref('')
 const editingModel = ref('')
 const modelName = ref('')
+watch(settingsModelKind, () => {
+  newModel.value = ''
+  editingModel.value = ''
+  modelName.value = ''
+})
 const configuredCategories = ref<Record<Kind, string[]>>({ text: [], art: [], video: [], persona: [] })
 const settingsCategoryKind = ref<Kind>('text')
 const newCategory = ref('')
@@ -219,11 +233,11 @@ watch(settingsCategoryKind, () => {
 const categories = computed(() => [...new Set(libraryItems.value.map((item) => item.category).filter(Boolean))]
   .sort((a, b) => a.localeCompare(b, 'zh-CN')))
 const tagOptions = computed(() => options(libraryItems.value.flatMap((item) => item.tags ?? [])))
-const modelOptions = computed(() => options([...models.value, ...prompts.value.flatMap(promptModels)]))
+const modelOptions = computed(() => options([...modelsFor(kind.value), ...libraryItems.value.flatMap(promptModels)]))
 const categoryOptions = computed(() => options([
   ...configuredCategories.value[kind.value], ...categories.value,
 ]))
-const editorModels = computed(() => [...new Set([...models.value, ...(draft.value?.models ?? [])])]
+const editorModels = computed(() => [...new Set([...modelsFor(draft.value?.kind ?? kind.value), ...(draft.value?.models ?? [])])]
   .filter((name) => name.toLowerCase().includes(modelQuery.value.trim().toLowerCase())))
 const recent = computed(() => prompts.value.slice(0, 6))
 const artwork = computed(() => prompts.value.filter(item => item.kind === 'art'))
@@ -280,11 +294,34 @@ async function reload() {
   stats.value = await PromptService.StorageStats()
 }
 
+const memoryUsage = ref<Awaited<ReturnType<typeof PromptService.MemoryUsage>>>()
+let memoryTimer: ReturnType<typeof setInterval>
+let readingMemory = false
+
+async function refreshMemoryUsage() {
+  if (readingMemory) return
+  readingMemory = true
+  try {
+    memoryUsage.value = await PromptService.MemoryUsage()
+  } catch {
+    memoryUsage.value = undefined
+  } finally {
+    readingMemory = false
+  }
+}
+
+function formatMemory(bytes?: number) {
+  if (!bytes) return '—'
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : formatBytes(bytes)
+}
+
 function onSystemTheme(event: MediaQueryListEvent) {
   systemDark.value = event.matches
 }
 
 onMounted(async () => {
+  void refreshMemoryUsage()
+  memoryTimer = setInterval(refreshMemoryUsage, 5000)
   media.addEventListener('change', onSystemTheme)
   menuUnsubscribe = [
     Events.On('prompt-next:new', () => {
@@ -312,6 +349,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearInterval(memoryTimer)
   menuUnsubscribe.forEach(unsubscribe => unsubscribe())
   media.removeEventListener('change', onSystemTheme)
   clearTimeout(noticeTimer)
@@ -445,16 +483,15 @@ function formatBytes(bytes?: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-async function reloadModels() {
-  const [all, custom] = await Promise.all([PromptService.Models(), PromptService.CustomModels()])
-  models.value = all ?? []
-  customModels.value = custom ?? []
+async function reloadModels(library: ModelKind) {
+  modelCatalogs.value[library] = await PromptService.Models(library)
 }
 
 function addModel() {
   void perform(async () => {
-    await PromptService.AddModel(newModel.value)
-    await reloadModels()
+    const library = settingsModelKind.value
+    await PromptService.AddModel(library, newModel.value)
+    await reloadModels(library)
     newModel.value = ''
     notify(t('模型已添加'))
   })
@@ -467,8 +504,9 @@ function editModel(name: string) {
 
 function renameModel() {
   void perform(async () => {
-    await PromptService.RenameModel(editingModel.value, modelName.value)
-    await reloadModels()
+    const library = settingsModelKind.value
+    await PromptService.RenameModel(library, editingModel.value, modelName.value)
+    await reloadModels(library)
     editingModel.value = ''
     notify(t('模型选项已更新'))
   })
@@ -476,8 +514,9 @@ function renameModel() {
 
 function deleteModel(name: string) {
   void perform(async () => {
-    await PromptService.DeleteModel(name)
-    await reloadModels()
+    const library = settingsModelKind.value
+    await PromptService.DeleteModel(library, name)
+    await reloadModels(library)
     if (editingModel.value === name) editingModel.value = ''
     notify(t('已从模型选项移除'))
   })
@@ -819,7 +858,7 @@ async function reloadPreferences() {
   layout.value = isLayout(savedLayout) ? savedLayout : 'cards'
   if (saved === 'dark' || saved === 'light' || saved === 'system') theme.value = saved
   await Promise.all([
-    reloadModels(),
+    reloadModels('art'), reloadModels('video'),
     ...libraries.map(item => reloadCategories(item.kind)),
     PromptService.ListCollections().then(items => { collections.value = items ?? [] }),
   ])
@@ -1300,6 +1339,11 @@ function openGitHub() {
       <footer class="status">
         <NButton size="tiny" text :disabled="busy" @click="openTrash"><template #icon><AppIcon name="trash" /></template>{{ t('回收站') }}</NButton>
         <span class="status-divider">·</span> {{ t('共') }} {{ prompts.length }} {{ t('条提示词') }}
+        <span class="status-memory" :title="t('应用主进程占用与系统物理内存总量，每 5 秒刷新')">
+          <span>{{ t('应用内存') }} <strong>{{ formatMemory(memoryUsage?.appBytes) }}</strong></span>
+          <span aria-hidden="true">/</span>
+          <span>{{ t('系统总内存') }} <strong>{{ formatMemory(memoryUsage?.totalBytes) }}</strong></span>
+        </span>
       </footer>
       <PromptTrash :show="trashOpen" :entries="trashEntries" :busy="busy" :format-date="formatDate"
         :library-label="libraryLabel" @close="trashOpen = false" @restore="restoreTrash" @purge="purgeTrash" />
@@ -1474,12 +1518,19 @@ function openGitHub() {
             </template>
             <template v-else-if="settingsSection === 'models'">
               <div class="setting-field">
+                <h3>{{ t('提示词库') }}</h3>
+                <NRadioGroup v-model:value="settingsModelKind" :disabled="busy">
+                  <NRadioButton value="art">{{ t('绘画提示词库') }}</NRadioButton>
+                  <NRadioButton value="video">{{ t('视频提示词库') }}</NRadioButton>
+                </NRadioGroup>
+              </div>
+              <div class="setting-field">
                 <h3>{{ t('添加自定义模型') }}</h3>
                 <form class="settings-model-form" @submit.prevent="addModel">
                   <NInput v-model:value="newModel" :placeholder="t('输入模型名称')" maxlength="100" :aria-label="t('模型名称')" />
                   <NButton attr-type="submit" type="primary" :disabled="!newModel.trim() || busy">{{ t('添加') }}</NButton>
                 </form>
-                <p class="setting-hint">{{ t('添加后可在绘画条目的模型下拉框中选择。') }}</p>
+                <p class="setting-hint">{{ t('添加后可在所选提示词库的模型下拉框中使用。') }}</p>
               </div>
               <div class="setting-field">
                 <h3>{{ t('自定义模型') }}</h3>
@@ -1505,7 +1556,7 @@ function openGitHub() {
               </div>
               <div class="setting-field">
                 <h3>{{ t('内置模型') }}</h3>
-                <div class="metadata"><NTag v-for="model in models.filter(name => !customModels.includes(name))" :key="model" size="small">{{ model }}</NTag></div>
+                <div class="metadata"><NTag v-for="model in settingsModels?.builtIn" :key="model" size="small">{{ model }}</NTag></div>
               </div>
             </template>
             <template v-else-if="settingsSection === 'categories'">

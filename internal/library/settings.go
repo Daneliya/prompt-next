@@ -10,18 +10,47 @@ import (
 )
 
 //go:embed image-models.json
-var builtInModels []byte
+var builtInImageModels []byte
 
-func (s *Service) Models() ([]string, error) {
-	var defaults []string
-	if err := json.Unmarshal(builtInModels, &defaults); err != nil {
-		return nil, err
-	}
-	custom, err := s.customModels()
-	return cleanTags(append(defaults, custom...)), err
+//go:embed video-models.json
+var builtInVideoModels []byte
+
+const customModelKey = "models:custom" // Preserve the original image-model setting.
+const customVideoModelKey = "models:custom:video"
+
+type modelSettings struct {
+	key      string
+	defaults []byte
 }
 
-const customModelKey = "models:custom"
+func modelsFor(kind string) (modelSettings, error) {
+	switch kind {
+	case "art":
+		return modelSettings{key: customModelKey, defaults: builtInImageModels}, nil
+	case "video":
+		return modelSettings{key: customVideoModelKey, defaults: builtInVideoModels}, nil
+	default:
+		return modelSettings{}, errors.New("模型库类型无效")
+	}
+}
+
+type ModelCatalog struct {
+	BuiltIn []string `json:"builtIn"`
+	Custom  []string `json:"custom"`
+}
+
+func (s *Service) Models(kind string) (ModelCatalog, error) {
+	config, err := modelsFor(kind)
+	if err != nil {
+		return ModelCatalog{}, err
+	}
+	var catalog ModelCatalog
+	if err := json.Unmarshal(config.defaults, &catalog.BuiltIn); err != nil {
+		return ModelCatalog{}, err
+	}
+	catalog.Custom, err = settingList(s.store.db, config.key)
+	return catalog, err
+}
 
 type settingsReader interface {
 	QueryRow(string, ...any) *sql.Row
@@ -53,36 +82,32 @@ func settingList(db settingsReader, key string) ([]string, error) {
 	return values, err
 }
 
-func (s *Service) customModels() ([]string, error) {
-	return settingList(s.store.db, customModelKey)
+func (s *Service) AddModel(kind, name string) error {
+	return s.updateModel(kind, "", name)
 }
 
-func (s *Service) CustomModels() ([]string, error) {
-	return s.customModels()
-}
-
-func (s *Service) AddModel(name string) error {
-	return s.updateModel("", name)
-}
-
-func (s *Service) RenameModel(current, name string) error {
+func (s *Service) RenameModel(kind, current, name string) error {
 	if current == "" {
 		return errors.New("请选择自定义模型")
 	}
-	return s.updateModel(current, name)
+	return s.updateModel(kind, current, name)
 }
 
-func (s *Service) updateModel(current, name string) error {
+func (s *Service) updateModel(kind, current, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || len([]rune(name)) > 100 {
 		return errors.New("模型名称须为 1 至 100 个字符")
+	}
+	config, err := modelsFor(kind)
+	if err != nil {
+		return err
 	}
 	tx, err := s.store.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	custom, err := settingList(tx, customModelKey)
+	custom, err := settingList(tx, config.key)
 	if err != nil {
 		return err
 	}
@@ -91,7 +116,7 @@ func (s *Service) updateModel(current, name string) error {
 		return errors.New("找不到该自定义模型")
 	}
 	var defaults []string
-	if err := json.Unmarshal(builtInModels, &defaults); err != nil {
+	if err := json.Unmarshal(config.defaults, &defaults); err != nil {
 		return err
 	}
 	for _, model := range defaults {
@@ -109,19 +134,23 @@ func (s *Service) updateModel(current, name string) error {
 	} else {
 		custom[index] = name
 	}
-	if err := putSetting(tx, customModelKey, stringsJSON(custom)); err != nil {
+	if err := putSetting(tx, config.key, stringsJSON(custom)); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Service) DeleteModel(name string) error {
+func (s *Service) DeleteModel(kind, name string) error {
+	config, err := modelsFor(kind)
+	if err != nil {
+		return err
+	}
 	tx, err := s.store.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	custom, err := settingList(tx, customModelKey)
+	custom, err := settingList(tx, config.key)
 	if err != nil {
 		return err
 	}
@@ -129,7 +158,7 @@ func (s *Service) DeleteModel(name string) error {
 	if index < 0 {
 		return errors.New("找不到该自定义模型")
 	}
-	if err := putSetting(tx, customModelKey, stringsJSON(slices.Delete(custom, index, index+1))); err != nil {
+	if err := putSetting(tx, config.key, stringsJSON(slices.Delete(custom, index, index+1))); err != nil {
 		return err
 	}
 	return tx.Commit()

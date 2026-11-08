@@ -32,10 +32,10 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 	dest := testLibrary(t, t.TempDir())
 	for _, err := range []error{
 		source.SetTheme("dark"), source.SetLayout("list"), source.AddCategory("art", "海报"),
-		source.AddModel("测试模型"), source.SetVariablePreset("sample-art", "霓虹", map[string]string{"主色调": "青色"}),
+		source.AddModel("art", "测试模型"), source.AddModel("video", "测试视频模型"), source.SetVariablePreset("sample-art", "霓虹", map[string]string{"主色调": "青色"}),
 		source.SetViewFields("cards", []string{"title", "body"}),
 		source.SetViewFields("persona:cards", []string{"title", "characters", "updated"}),
-		dest.SetTheme("light"), dest.AddModel("旧模型"),
+		dest.SetTheme("light"), dest.AddModel("art", "旧模型"), dest.AddModel("video", "旧视频模型"),
 	} {
 		if err != nil {
 			t.Fatal(err)
@@ -57,12 +57,13 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 	}
 	theme, _ := dest.GetTheme()
 	layout, _ := dest.GetLayout()
-	models, _ := dest.CustomModels()
+	imageModels, _ := dest.Models("art")
+	videoModels, _ := dest.Models("video")
 	categories, _ := dest.CustomCategories("art")
 	presets, _ := dest.VariablePresets("sample-art")
-	if theme != "dark" || layout != "list" || !slices.Equal(models, []string{"测试模型"}) ||
+	if theme != "dark" || layout != "list" || !slices.Equal(imageModels.Custom, []string{"测试模型"}) || !slices.Equal(videoModels.Custom, []string{"测试视频模型"}) ||
 		!slices.Equal(categories, []string{"海报"}) || presets["霓虹"]["主色调"] != "青色" {
-		t.Fatalf("settings did not round trip: %s %v %v %v", theme, models, categories, presets)
+		t.Fatalf("settings did not round trip: %s %v %v %v", theme, imageModels.Custom, categories, presets)
 	}
 	cards, err := dest.ViewFields("cards")
 	if err != nil || !slices.Equal(cards, []string{"title", "body"}) {
@@ -177,7 +178,8 @@ func TestMigrateExistingWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := testLibrary(t, dir)
-	models, err := s.CustomModels()
+	catalog, err := s.Models("art")
+	models := catalog.Custom
 	if err != nil || !slices.Equal(models, []string{"旧模型"}) {
 		t.Fatalf("models = %v, %v", models, err)
 	}
@@ -594,5 +596,38 @@ func TestEditableDatesAndRecentPromptCounts(t *testing.T) {
 	entry.UpdatedAt = "invalid"
 	if _, err := s.SavePrompt(entry); err == nil {
 		t.Fatal("invalid timestamp accepted")
+	}
+}
+
+func TestModelCatalogsAreIndependent(t *testing.T) {
+	s := testLibrary(t, t.TempDir())
+	if err := putSetting(s.store.db, customModelKey, stringsJSON([]string{"Shared Legacy Name"})); err != nil {
+		t.Fatal(err)
+	}
+	art, err := s.Models("art")
+	if err != nil || !slices.Equal(art.Custom, []string{"Shared Legacy Name"}) || slices.Contains(art.BuiltIn, "Muse Video") {
+		t.Fatalf("image catalog = %+v, %v", art, err)
+	}
+	video, err := s.Models("video")
+	if err != nil || len(video.Custom) != 0 || !slices.Contains(video.BuiltIn, "Seedance 2.5") ||
+		!slices.Contains(video.BuiltIn, "Muse Video") || slices.Contains(video.BuiltIn, "GPT Image 2.6") {
+		t.Fatalf("video catalog = %+v, %v", video, err)
+	}
+	if err := s.AddModel("video", "Shared Legacy Name"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameModel("video", "Shared Legacy Name", "Custom Video"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteModel("art", "Custom Video"); err == nil {
+		t.Fatal("video model was visible to image settings")
+	}
+	art, err = s.Models("art")
+	if err != nil || !slices.Equal(art.Custom, []string{"Shared Legacy Name"}) {
+		t.Fatalf("video edit changed image settings: %+v, %v", art, err)
+	}
+	video, err = s.Models("video")
+	if err != nil || !slices.Equal(video.Custom, []string{"Custom Video"}) {
+		t.Fatalf("video custom model = %+v, %v", video, err)
 	}
 }

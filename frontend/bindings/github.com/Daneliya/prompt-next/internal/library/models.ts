@@ -38,6 +38,11 @@ export interface ImportSummary {
     "snapshot": string;
 }
 
+export interface ModelCatalog {
+    "builtIn": string[] | null;
+    "custom": string[] | null;
+}
+
 export interface OrphanImage {
     "name": string;
     "bytes": number;

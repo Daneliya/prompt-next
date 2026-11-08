@@ -291,7 +291,7 @@ func validateBackupSetting(key, value string) error {
 			return err
 		}
 		return validateViewFields(fields)
-	case key == customModelKey || strings.HasPrefix(key, "categories:"):
+	case key == customModelKey || key == customVideoModelKey || strings.HasPrefix(key, "categories:"):
 		var names []string
 		if json.Unmarshal([]byte(value), &names) != nil {
 			return errors.New("备份中的分类或模型设置无效")
@@ -455,7 +455,7 @@ func restoreSettings(tx *sql.Tx, settings map[string]string, includesText, inclu
 	if _, err := tx.Exec(`DELETE FROM settings
 		WHERE key != ? AND (? OR (key NOT IN ('categories:text', 'view-fields:waterfall') AND key NOT IN
 			(SELECT 'variables:' || id FROM prompts WHERE kind = 'text')))
-		AND (? OR (key != 'categories:video' AND key NOT IN
+		AND (? OR (key NOT IN ('categories:video', 'models:custom:video') AND key NOT IN
 			(SELECT 'variables:' || id FROM prompts WHERE kind = 'video')))`, promptCollectionsKey, includesText, includesVideo); err != nil {
 		return err
 	}

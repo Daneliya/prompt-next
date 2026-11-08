@@ -7,6 +7,7 @@ export type {
     ImageDetail,
     ImageInput,
     ImportSummary,
+    ModelCatalog,
     OrphanImage,
     Prompt,
     PromptCollection,
