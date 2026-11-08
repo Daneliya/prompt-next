@@ -8,5 +8,6 @@ export {
 
 export type {
     AppMetadata,
-    ChosenBackup
+    ChosenBackup,
+    ChosenVideo
 } from "./models.js";

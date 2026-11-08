@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed } from 'vue'
 
 const props = defineProps<{
@@ -12,7 +13,7 @@ const slices = computed(() => {
   const ordered = [...props.items].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
   const head = ordered.slice(0, 5)
   const tail = ordered.slice(5)
-  if (tail.length) head.push({ name: `其余 ${tail.length} 项`, count: tail.reduce((sum, item) => sum + item.count, 0) })
+  if (tail.length) head.push({ name: t('其余 {0} 项', tail.length), count: tail.reduce((sum, item) => sum + item.count, 0) })
   let position = 0
   return head.map((item, index) => {
     const start = position
@@ -37,7 +38,7 @@ const gradient = computed(() => slices.value.length
           <strong>{{ slice.count }}</strong>
         </li>
       </ul>
-      <p v-else class="chart-note">暂无数据</p>
+      <p v-else class="chart-note">{{ t('暂无数据') }}</p>
     </div>
   </section>
 </template>

@@ -24,12 +24,36 @@ defineProps<{ name: string }>()
       <ellipse cx="12" cy="6" rx="8" ry="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <path d="M4 6v11c0 4 16 4 16 0V6M4 12c0 4 16 4 16 0" fill="none" stroke="currentColor" stroke-width="1.7"/>
     </template>
+    <template v-else-if="name === 'video'">
+      <rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="m10 9 5 3-5 3z" fill="currentColor"/>
+    </template>
+    <template v-else-if="name === 'trash'">
+      <path d="M4 6h16m-14 0 1 14h10l1-14M9 6V3h6v3m-5 4v6m4-6v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </template>
+    <template v-else-if="name === 'text'">
+      <path d="M6 3.5h8l4 4V20.5H6zM14 3.5v4h4M9 12h6m-6 4h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </template>
+    <template v-else-if="name === 'waterfall'">
+      <path d="M3 4h7v10H3zM14 4h7v6h-7zM3 17h7v3H3zM14 13h7v7h-7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+    </template>
     <template v-else-if="name === 'cards'">
       <rect x="3" y="5" width="8" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <rect x="14" y="5" width="7" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
     </template>
+    <template v-else-if="name === 'folder'">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+    </template>
+    <template v-else-if="name === 'tag'">
+      <path d="M3 4h8l9 9a2 2 0 0 1 0 2.8l-4.2 4.2a2 2 0 0 1-2.8 0l-10-10Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <circle cx="7.5" cy="8.5" r="1.3" fill="currentColor"/>
+    </template>
     <template v-else-if="name === 'list'">
       <path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </template>
+    <template v-else-if="name === 'chevron-left' || name === 'chevron-right'">
+      <path :d="name === 'chevron-left' ? 'm14.5 6.5-5 5.5 5 5.5' : 'm9.5 6.5 5 5.5-5 5.5'"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </template>
     <template v-else-if="name === 'search'">
       <circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/>

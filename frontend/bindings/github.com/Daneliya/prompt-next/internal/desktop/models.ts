@@ -14,3 +14,9 @@ export interface ChosenBackup {
     "name": string;
     "summary": library$0.ImportSummary;
 }
+
+export interface ChosenVideo {
+    "id": string;
+    "name": string;
+    "bytes": number;
+}

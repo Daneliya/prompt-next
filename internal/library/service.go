@@ -4,18 +4,20 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"os"
 )
 
 type Service struct {
-	store *promptStore
+	store           *promptStore
+	locationWarning string
 }
 
 func Open() (*Service, error) {
-	store, err := openPromptStore()
+	base, err := os.UserConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return &Service{store: store}, nil
+	return openWithLocation(base)
 }
 
 func Close(s *Service) error {
@@ -69,8 +71,12 @@ func (s *Service) GetLayout() (string, error) {
 }
 
 func (s *Service) SetLayout(layout string) error {
-	if layout != "cards" && layout != "list" {
+	if !validLayout(layout) {
 		return errors.New("视图选项无效")
 	}
 	return putSetting(s.store.db, "layout", layout)
+}
+
+func validLayout(layout string) bool {
+	return layout == "cards" || layout == "list" || layout == "waterfall"
 }

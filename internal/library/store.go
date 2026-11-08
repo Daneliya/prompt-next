@@ -22,25 +22,17 @@ type promptStore struct {
 	thumbnailMu sync.Mutex
 }
 
-func openPromptStore() (*promptStore, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return nil, err
-	}
-	dir, err := resolveDataDirectory(base)
-	if err != nil {
-		return nil, err
-	}
-	return openStoreAt(dir)
-}
-
-func openStoreAt(dir string) (*promptStore, error) {
+func storeURL(dir, query string) string {
 	path := filepath.ToSlash(filepath.Join(dir, "prompts.db"))
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	dsn := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout%285000%29&_txlock=immediate"}
-	db, err := sql.Open("sqlite", dsn.String())
+	dsn := url.URL{Scheme: "file", Path: path, RawQuery: query}
+	return dsn.String()
+}
+
+func openStoreAt(dir string) (*promptStore, error) {
+	db, err := sql.Open("sqlite", storeURL(dir, "_pragma=busy_timeout%285000%29&_txlock=immediate"))
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +69,7 @@ func (s *promptStore) migrate() error {
 		var err error
 		migratedImages, err = s.addPromptNumbers(tx)
 		return err
-	}}
+	}, addTextLibrary, addVideoLibrary, addLibraryExamples}
 	if version < 0 || version > len(migrations) {
 		return fmt.Errorf("数据库版本 %d 高于当前应用支持的版本", version)
 	}
@@ -102,6 +94,63 @@ func (s *promptStore) migrate() error {
 		_ = os.Remove(s.thumbnailPath(name))
 	}
 	return nil
+}
+
+func addTextLibrary(tx *sql.Tx) error {
+	return rebuildPromptKinds(tx, "'persona', 'art', 'text'")
+}
+
+func addVideoLibrary(tx *sql.Tx) error {
+	return rebuildPromptKinds(tx, "'persona', 'art', 'text', 'video'")
+}
+
+func addLibraryExamples(tx *sql.Tx) error {
+	now := timestamp()
+	samples := []Prompt{
+		{
+			ID: "sample-text", Kind: "text", Title: "会议纪要整理 · 示例",
+			Category: "效率工具", Tags: []string{"示例", "会议纪要"},
+			Body:      "根据以下会议记录整理纪要：\n\n{{会议记录}}\n\n按「议题」「已确认的决定」「待办事项」输出。每项待办写明负责人和截止日期，记录中未提到的内容标注为「待确认」。",
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "sample-video", Kind: "video", Title: "雨后咖啡馆 · 示例",
+			Category: "短视频制作", Tags: []string{"示例", "运镜"},
+			Body:       "雨后的街角咖啡馆。镜头从窗上的雨滴缓慢推入，焦点渐渐移向桌上冒着热气的咖啡。玻璃上的车灯倒影轻轻掠过，室内暖光和街道冷色形成对比。",
+			English:    "A street-corner café after the rain. Slowly dolly in from raindrops on the window and rack focus to a steaming cup of coffee. Passing headlights drift across the glass as warm interior lighting contrasts with the cool street.",
+			Negative:   "镜头抖动、光线闪烁、文字水印",
+			Parameters: "8 秒，16:9，单镜头，缓慢推近",
+			CreatedAt:  now, UpdatedAt: now,
+		},
+	}
+	for _, sample := range samples {
+		inserted, err := insertPrompt(tx, sample)
+		if err != nil {
+			return err
+		}
+		if inserted {
+			if _, err := ensurePromptNumber(tx, sample.ID, 0); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func rebuildPromptKinds(tx *sql.Tx, kinds string) error {
+	_, err := tx.Exec(fmt.Sprintf(`
+		CREATE TABLE prompts_with_new_kinds (
+			id TEXT PRIMARY KEY NOT NULL,
+			kind TEXT NOT NULL CHECK(kind IN (%s)),
+			updated_at TEXT NOT NULL,
+			record TEXT NOT NULL
+		);
+		INSERT INTO prompts_with_new_kinds SELECT id, kind, updated_at, record FROM prompts;
+		DROP TABLE prompts;
+		ALTER TABLE prompts_with_new_kinds RENAME TO prompts;
+		CREATE INDEX prompts_kind_updated ON prompts(kind, updated_at DESC);
+	`, kinds))
+	return err
 }
 
 func initialSchema(tx *sql.Tx) error {
@@ -194,6 +243,8 @@ func listPrompts(db interface {
 		}
 		prompt.Number = number
 		prompt.normalizeModels()
+		prompt.Videos = prompt.videoNames()
+		prompt.Video = ""
 		prompts = append(prompts, prompt)
 	}
 	return prompts, rows.Err()
@@ -203,10 +254,24 @@ func savePrompt(tx *sql.Tx, p Prompt) (Prompt, error) {
 	if err := p.validate(); err != nil {
 		return Prompt{}, err
 	}
-	p.UpdatedAt = timestamp()
+	now := timestamp()
+	for _, date := range []*string{&p.CreatedAt, &p.UpdatedAt} {
+		if *date == "" {
+			continue
+		}
+		*date = normalizeDate(*date, "")
+		if *date == "" {
+			return Prompt{}, errors.New("时间格式无效")
+		}
+	}
+	if p.UpdatedAt == "" {
+		p.UpdatedAt = now
+	}
 	if p.ID == "" {
 		p.ID = rand.Text()
-		p.CreatedAt = p.UpdatedAt
+		if p.CreatedAt == "" {
+			p.CreatedAt = now
+		}
 		data, err := json.Marshal(p)
 		if err != nil {
 			return Prompt{}, err
@@ -218,19 +283,25 @@ func savePrompt(tx *sql.Tx, p Prompt) (Prompt, error) {
 		p.Number, err = ensurePromptNumber(tx, p.ID, 0)
 		return p, err
 	}
-	if err := tx.QueryRow("SELECT number FROM prompt_numbers WHERE prompt_id = ?", p.ID).Scan(&p.Number); err != nil {
+	var existingCreated string
+	if err := tx.QueryRow(`SELECT n.number, coalesce(json_extract(p.record, '$.createdAt'), '')
+		FROM prompts p JOIN prompt_numbers n ON n.prompt_id = p.id WHERE p.id = ? AND p.kind = ?`, p.ID, p.Kind).
+		Scan(&p.Number, &existingCreated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Prompt{}, errors.New("找不到这条提示词，请刷新列表")
 		}
 		return Prompt{}, err
 	}
+	if p.CreatedAt == "" {
+		p.CreatedAt = existingCreated
+	}
 	result, err := tx.Exec(`UPDATE prompts SET updated_at = ?,
 		record = json_set(record, '$.title', ?, '$.body', ?, '$.description', ?,
-			'$.category', ?, '$.tags', json(?), '$.author', ?, '$.negative', ?,
-			'$.model', ?, '$.models', json(?), '$.parameters', ?, '$.english', ?, '$.images', json(?), '$.updatedAt', ?)
+			'$.category', ?, '$.tags', json(?), '$.author', ?, '$.authorUrl', ?, '$.videoUrl', ?, '$.video', '', '$.videos', json(?), '$.negative', ?,
+			'$.model', ?, '$.models', json(?), '$.parameters', ?, '$.english', ?, '$.images', json(?), '$.referenceImages', json(?), '$.createdAt', ?, '$.updatedAt', ?)
 		WHERE id = ? AND kind = ?`,
-		p.UpdatedAt, p.Title, p.Body, p.Description, p.Category, stringsJSON(p.Tags), p.Author,
-		p.Negative, p.Model, stringsJSON(p.Models), p.Parameters, p.English, stringsJSON(p.Images), p.UpdatedAt, p.ID, p.Kind)
+		p.UpdatedAt, p.Title, p.Body, p.Description, p.Category, stringsJSON(p.Tags), p.Author, p.AuthorURL, p.VideoURL, stringsJSON(p.Videos),
+		p.Negative, p.Model, stringsJSON(p.Models), p.Parameters, p.English, stringsJSON(p.Images), stringsJSON(p.ReferenceImages), p.CreatedAt, p.UpdatedAt, p.ID, p.Kind)
 	return p, requireChanged(result, err)
 }
 

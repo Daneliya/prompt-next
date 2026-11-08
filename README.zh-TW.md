@@ -2,9 +2,9 @@
 
 # Prompt Next
 
-**以本機為主的 AI 繪畫與人設提示詞管理工具。** 在同一個桌面工作台整理中英文提示詞、AI 模型和參考圖，隨時搜尋、預覽、複製及備份。
+**以本機為主的桌面提示詞管理工具。** 在同一個工作台整理文字、AI 繪畫、影片與人設提示詞。
 
-[简体中文](README.md) · [English](README.en.md) · 繁體中文
+[English](README.en.md) · [简体中文](README.md) · **繁體中文**
 
 [![Go 1.26+](https://img.shields.io/badge/Go-1.26%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![Wails v3](https://img.shields.io/badge/Wails-v3-DF0000?style=flat-square)](https://wails.io/)
@@ -15,43 +15,28 @@
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![MIT License](https://img.shields.io/badge/License-MIT-357A38?style=flat-square)](LICENSE)
 
+## 工作台預覽
+
+![Prompt Next](doc/assets/home.png)
+
 ## 功能
 
-- **兩套提示詞庫**。優先顯示 AI 繪畫庫，也保留大肥魚人設庫。可在卡片和三欄清單間切換，支援搜尋、分類、標籤、收藏、篩選和排序，也可批次整理並在 24 小時內復原刪除。
-- **繪畫資料管理**。可儲存中英文提示詞、多個模型、負向提示詞與生成參數。參考圖支援多選、放大和拖曳排序，第一張作為封面。
-- **複製與移轉**。支援範本變數預設、單筆 Markdown 或選中項目匯出及舊人設匯入。完整備份包含圖片與設定，覆蓋前會自動儲存快照。
-- **本機工作台**。查看筆數、最近更新、儲存用量及圖表。可切換淺色、深色與跟隨系統，或在設定中直接開啟資料夾、預覽並清理未引用圖片。
+- **四個獨立提示詞庫。** 支援文字、繪畫、影片和人設，可整理分類、標籤、原作者和時間。繪畫和影片也支援中英文提示詞、負向提示詞、參數和多個模型。
+- **圖片和影片預覽。** 參考圖可排序，第一張作為封面。圖片彈窗支援切換與查看檔案資訊。影片條目可加入多段 MP4 或 WebM，在彈窗播放。
+- **搜尋和整理。** 可切換卡片、清單和瀑布流，自訂顯示欄位，以標題、正文、編號搜尋，並用合集歸納提示詞變體。
+- **複用和復原。** 支援範本變數預設、複製提示詞、匯出 Markdown 和批次操作。可在 24 小時內從資源回收筒復原，或永久刪除。
+- **本機工作台。** 查看近 14 天新增提示詞趨勢、最近更新和儲存用量。可切換語言、主題和資料夾，備份附件與設定。覆蓋還原前會建立安全快照。
 
-## 安裝與開發
+## 安裝
 
-安裝檔目標平台為 **macOS Apple Silicon（DMG）** 與 **Windows x64（EXE）**。有發行版本時，可在 GitHub Releases 下載，也可在本機建置。
+前往 [GitHub Releases](https://github.com/Daneliya/prompt-next/releases) 查看已發行的安裝檔。
 
-開發需要 Go 1.26+、Node.js 24、npm 和 Wails v3。macOS 需要 Xcode Command Line Tools。Windows 執行時使用 WebView2，封裝安裝程式需要 NSIS。
-
-```bash
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-wails3 doctor
-wails3 dev
-```
-
-若找不到 `wails3`，請將 Go 的可執行檔目錄加入 `PATH`。首次啟動會安裝前端依賴並產生呼叫繫結。
-
-```bash
-wails3 task lint
-wails3 task test
-wails3 build
-```
-
-| 安裝檔 | 指令 |
-| --- | --- |
-| macOS DMG | `wails3 task darwin:package:dmg` |
-| Windows x64 NSIS | `wails3 task windows:package ARCH=amd64` |
-
-在具備所需工具鏈的系統執行，產物位於 `bin/`。可由 **設定 → 資料管理 → 開啟資料夾** 找到本機資料。
+- **macOS Apple Silicon。** 開啟 DMG，將 Prompt Next 拖入「應用程式」。
+- **Windows x64。** 執行 EXE 安裝程式。應用程式需要 WebView2。
 
 ## 文件
 
-- [開發文件](doc/development.zh-TW.md) · 需求、架構、資料和封裝
+- [簡體中文開發文件](doc/开发文档.md) · 需求、架構、資料和封裝
 - [簡體中文開發教學](doc/开发教程.md) · 環境安裝和動手練習
 
 採用 [MIT 授權](LICENSE)。桌面建置腳本源自 Wails 範本。 [Wails 授權聲明](licenses/Wails-MIT.txt)

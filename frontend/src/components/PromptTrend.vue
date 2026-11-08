@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{ days: { date: string; count: number }[] }>()
@@ -25,24 +26,24 @@ const labels = computed(() => points.value.filter((_, index) => index % 4 === 0 
 </script>
 
 <template>
-  <section class="chart-card trend-card" aria-label="近 14 天新增图片">
-    <header class="chart-heading"><div><h2>新增图片</h2><p>最近 14 天 · 按文件首次保存日期</p></div><strong>{{ total }} 张</strong></header>
-    <svg class="trend-plot" viewBox="0 0 460 151" role="img" aria-label="每日新增图片的折线面积图">
-      <defs><linearGradient id="image-trend-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".29"/><stop offset="1" stop-color="currentColor" stop-opacity=".05"/></linearGradient></defs>
+  <section class="chart-card trend-card" :aria-label="t('近 14 天新增提示词')">
+    <header class="chart-heading"><div><h2>{{ t('新增提示词') }}</h2><p>{{ t('最近 14 天 · 按条目创建日期') }}</p></div><strong>{{ total }} {{ t('条') }}</strong></header>
+    <svg class="trend-plot" viewBox="0 0 460 151" role="img" :aria-label="t('每日新增提示词的折线面积图')">
+      <defs><linearGradient id="prompt-trend-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".29"/><stop offset="1" stop-color="currentColor" stop-opacity=".05"/></linearGradient></defs>
       <g v-for="tick in ticks" :key="tick.label">
         <line :x1="left" :x2="right" :y1="tick.y" :y2="tick.y" class="trend-grid" />
         <text :x="left - 8" :y="tick.y + 3" text-anchor="end">{{ tick.label }}</text>
       </g>
-      <polygon :points="area" fill="url(#image-trend-fill)" />
+      <polygon :points="area" fill="url(#prompt-trend-fill)" />
       <polyline :points="line" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
       <g v-for="(point, index) in points" :key="point.date">
         <circle :cx="point.x" :cy="point.y" :r="hovered === index ? 4.4 : 2.3" fill="currentColor" />
         <rect :x="point.x - 13" :y="top" width="26" :height="bottom - top + 6" fill="transparent" @pointerenter="hovered = index" @pointerleave="hovered = null">
-          <title>{{ point.date }} · {{ point.count }} 张</title>
+          <title>{{ point.date }} · {{ point.count }} {{ t('条') }}</title>
         </rect>
       </g>
       <text v-for="point in labels" :key="point.date" :x="point.x" y="140" text-anchor="middle">{{ point.date.slice(5).replace('-', '/') }}</text>
     </svg>
-    <p class="chart-note">{{ current ? current.date + ' · 新增 ' + current.count + ' 张' : '同一图片重复引用时只计一次' }}</p>
+    <p class="chart-note">{{ current ? current.date + t(' · 新增 ') + current.count + ' ' + t('条') : t('统计四个库的在库条目') }}</p>
   </section>
 </template>

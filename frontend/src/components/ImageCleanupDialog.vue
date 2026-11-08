@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n'
 import { computed } from 'vue'
 import { NButton, NModal } from 'naive-ui'
 import { imageURL } from '../composables/useEditorImages'
@@ -15,10 +16,10 @@ const bytes = computed(() => props.files?.reduce((sum, file) => sum + file.bytes
 </script>
 
 <template>
-  <NModal :show="files !== undefined" preset="card" title="清理未被引用的图片" class="app-modal cleanup-modal"
+  <NModal :show="files !== undefined" preset="card" :title="t('清理未被引用的图片')" class="app-modal cleanup-modal"
     :mask-closable="!busy" :close-on-esc="!busy" :closable="!busy" @update:show="emit('close')">
     <template v-if="files?.length">
-      <p>找到 {{ files.length }} 张，共 {{ formatBytes(bytes) }}。确认后会重新检查引用，只删除下列仍未被引用的文件。</p>
+      <p>{{ t('找到') }} {{ files.length }} {{ t('张，共') }} {{ formatBytes(bytes) }}{{ t('。确认后会重新检查引用，只删除下列仍未被引用的文件。') }}</p>
       <ul class="cleanup-files">
         <li v-for="file in files" :key="file.name">
           <img :src="imageURL(file.name, true)" loading="lazy" alt="">
@@ -26,10 +27,10 @@ const bytes = computed(() => props.files?.reduce((sum, file) => sum + file.bytes
         </li>
       </ul>
     </template>
-    <p v-else>目前没有可清理的图片。撤销期限内的删除记录仍保留其图片。</p>
+    <p v-else>{{ t('目前没有可清理的图片。撤销期限内的删除记录仍保留其图片。') }}</p>
     <div class="actions">
-      <NButton :disabled="busy" @click="emit('close')">关闭</NButton>
-      <NButton v-if="files?.length" type="error" :loading="busy" @click="emit('confirm', files.map(file => file.name))">确认清理</NButton>
+      <NButton :disabled="busy" @click="emit('close')">{{ t('关闭') }}</NButton>
+      <NButton v-if="files?.length" type="error" :loading="busy" @click="emit('confirm', files.map(file => file.name))">{{ t('确认清理') }}</NButton>
     </div>
   </NModal>
 </template>

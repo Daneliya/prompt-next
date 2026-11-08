@@ -35,7 +35,7 @@ func TestLegacyImportAndBackupRestore(t *testing.T) {
 		t.Fatalf("import = %+v, %v", result, err)
 	}
 	items, err := s.ListPrompts()
-	if err != nil || len(items) != 3 {
+	if err != nil || len(items) != 5 {
 		t.Fatalf("list = %+v, %v", items, err)
 	}
 	imported := items[0]
@@ -56,6 +56,10 @@ func TestLegacyImportAndBackupRestore(t *testing.T) {
 	if err := s.SetTheme("dark"); err != nil {
 		t.Fatal(err)
 	}
+	backup, err := BackupJSON(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.store.db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +74,6 @@ func TestLegacyImportAndBackupRestore(t *testing.T) {
 		t.Fatal("legacy import unexpectedly replaced both libraries")
 	}
 
-	backup, err := encodeBackup(items)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if result, err := s.ImportPrompts(string(backup), true); err != nil || result.Added != len(items) {
 		t.Fatalf("restore = %+v, %v", result, err)
 	}

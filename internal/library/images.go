@@ -24,6 +24,7 @@ import (
 )
 
 const maxImageSize = 12 << 20
+const MaxImageUploadBytes = 80 << 20
 const imageRoute = "/prompt-images/"
 const thumbnailRoute = "/prompt-thumbnails/"
 
@@ -56,6 +57,14 @@ func checkedImage(data []byte) (string, error) {
 
 func (s *promptStore) imageAssets(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key, matches := strings.CutPrefix(r.URL.Path, videoPosterRoute); matches {
+			s.serveVideo(w, r, key, true)
+			return
+		}
+		if key, matches := strings.CutPrefix(r.URL.Path, videoRoute); matches {
+			s.serveVideo(w, r, key, false)
+			return
+		}
 		name, matches := strings.CutPrefix(r.URL.Path, imageRoute)
 		thumbnail := false
 		if !matches {
@@ -147,14 +156,18 @@ func (s *promptStore) imagePath(key string) (string, error) {
 	if !imageKey.MatchString(key) {
 		return "", errors.New("图片路径无效")
 	}
-	path := filepath.Join(s.imagesDir(), key)
+	return scopedMediaPath(s.imagesDir(), key)
+}
+
+func scopedMediaPath(root, key string) (string, error) {
+	path := filepath.Join(root, key)
 	if strings.Contains(key, "/") {
 		info, err := os.Lstat(filepath.Dir(path))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 		if err == nil && !info.IsDir() {
-			return "", errors.New("图片目录无效")
+			return "", errors.New("媒体目录无效")
 		}
 	}
 	return path, nil
@@ -211,16 +224,36 @@ func (s *promptStore) copyImage(source, target string, original os.FileInfo) err
 	return nil
 }
 
+func DecodeImageUpload(encoded string) ([]byte, error) {
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxImageSize) {
+		return nil, errors.New("单张图片大小须在 12 MB 以内")
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.New("图片读取失败")
+	}
+	if len(data) > maxImageSize {
+		return nil, errors.New("单张图片大小须在 12 MB 以内")
+	}
+	return data, nil
+}
+
 type ImageInput struct {
 	Name         string `json:"name"`
 	Data         string `json:"data"`
 	SourceNumber int64  `json:"sourceNumber"`
+	Reference    bool   `json:"reference"`
+	UploadID     string `json:"uploadId,omitempty"`
+	UploadBytes  []byte `json:"-"`
 }
 
 func (s *Service) SaveWithImages(prompt Prompt, uploads []string) (Prompt, error) {
-	attachments := make([]ImageInput, 0, len(prompt.Images)+len(uploads))
+	attachments := make([]ImageInput, 0, len(prompt.Images)+len(prompt.ReferenceImages)+len(uploads))
 	for _, name := range prompt.Images {
 		attachments = append(attachments, ImageInput{Name: name})
+	}
+	for _, name := range prompt.ReferenceImages {
+		attachments = append(attachments, ImageInput{Name: name, Reference: true})
 	}
 	for _, data := range uploads {
 		attachments = append(attachments, ImageInput{Data: data})
@@ -229,42 +262,51 @@ func (s *Service) SaveWithImages(prompt Prompt, uploads []string) (Prompt, error
 }
 
 func (s *Service) SaveOrderedImages(prompt Prompt, attachments []ImageInput) (Prompt, error) {
-	prompt.Images = nil
+	return s.saveOrderedMedia(prompt, attachments, 0, nil)
+}
+
+func (s *Service) saveOrderedMedia(prompt Prompt, attachments []ImageInput, sourceNumber int64, videoData map[string][]byte) (Prompt, error) {
+	prompt.Images, prompt.ReferenceImages = nil, nil
 	if err := prompt.validate(); err != nil {
 		return Prompt{}, err
 	}
-	if len(attachments) > 24 || (prompt.Kind != "art" && len(attachments) != 0) {
-		return Prompt{}, errors.New("绘画条目最多可附加 24 张图片")
+	if len(attachments) > 24 || (!supportsMedia(prompt.Kind) && len(attachments) != 0) {
+		return Prompt{}, errors.New("绘画和视频条目最多可附加 24 张图片")
 	}
 	files := make(map[string][]byte)
 	sources := make(map[string]int64)
 	total := 0
 	for _, attachment := range attachments {
+		names := &prompt.Images
+		if attachment.Reference {
+			names = &prompt.ReferenceImages
+		}
 		if attachment.Name != "" {
-			if attachment.Data != "" || !imageName.MatchString(attachment.Name) || attachment.SourceNumber < 0 || attachment.SourceNumber > maxPromptNumber {
+			if attachment.Data != "" || attachment.UploadBytes != nil || !imageName.MatchString(attachment.Name) || attachment.SourceNumber < 0 || attachment.SourceNumber > maxPromptNumber {
 				return Prompt{}, errors.New("图片引用无效")
 			}
 			sources[attachment.Name] = attachment.SourceNumber
-			prompt.Images = append(prompt.Images, attachment.Name)
+			*names = append(*names, attachment.Name)
 			continue
 		}
-		if len(attachment.Data) > base64.StdEncoding.EncodedLen(maxImageSize) {
-			return Prompt{}, errors.New("单张图片大小须在 12 MB 以内")
-		}
-		data, err := base64.StdEncoding.DecodeString(attachment.Data)
-		if err != nil {
-			return Prompt{}, errors.New("图片读取失败")
+		data := attachment.UploadBytes
+		if data == nil {
+			var err error
+			data, err = DecodeImageUpload(attachment.Data)
+			if err != nil {
+				return Prompt{}, err
+			}
 		}
 		total += len(data)
-		if total > 40<<20 {
-			return Prompt{}, errors.New("每次保存的新图片合计须在 40 MB 以内")
+		if total > MaxImageUploadBytes {
+			return Prompt{}, errors.New("每次保存的新图片合计须在 80 MB 以内")
 		}
 		name, err := checkedImage(data)
 		if err != nil {
 			return Prompt{}, err
 		}
 		files[name] = data
-		prompt.Images = append(prompt.Images, name)
+		*names = append(*names, name)
 	}
 	tx, err := s.store.db.Begin()
 	if err != nil {
@@ -275,7 +317,7 @@ func (s *Service) SaveOrderedImages(prompt Prompt, attachments []ImageInput) (Pr
 	if err != nil {
 		return Prompt{}, err
 	}
-	for _, name := range saved.Images {
+	for _, name := range cleanTags(saved.imageNames()) {
 		key := scopedImage(saved.Number, name)
 		if data, ok := files[name]; ok {
 			if err := s.store.writeImage(key, data); err != nil {
@@ -296,5 +338,83 @@ func (s *Service) SaveOrderedImages(prompt Prompt, attachments []ImageInput) (Pr
 			return Prompt{}, errors.New("附件找不到，请移除后重新添加")
 		}
 	}
-	return saved, tx.Commit()
+	if err := s.store.commitWithVideos(tx, saved, sourceNumber, videoData); err != nil {
+		return Prompt{}, err
+	}
+	return saved, nil
+}
+
+// ImageForExport returns original bytes from a saved image or an unsaved upload.
+func ImageForExport(s *Service, number int64, name, upload string) ([]byte, string, error) {
+	var data []byte
+	if upload != "" {
+		if len(upload) > base64.StdEncoding.EncodedLen(maxImageSize) {
+			return nil, "", errors.New("单张图片大小须在 12 MB 以内")
+		}
+		var err error
+		data, err = base64.StdEncoding.DecodeString(upload)
+		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		if number <= 0 || !imageName.MatchString(name) {
+			return nil, "", errors.New("图片引用无效")
+		}
+		path, err := s.store.imagePath(scopedImage(number, name))
+		if err != nil {
+			return nil, "", err
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxImageSize {
+			return nil, "", errors.New("无法读取原图")
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, "", err
+		}
+		defer file.Close()
+		data, err = io.ReadAll(io.LimitReader(file, maxImageSize+1))
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	original, err := checkedImage(data)
+	return data, filepath.Ext(original), err
+}
+
+type ImageDetail struct {
+	Name   string `json:"name"`
+	Bytes  int64  `json:"bytes"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Format string `json:"format"`
+}
+
+func (s *Service) ImageDetails(number int64, names []string) []ImageDetail {
+	details := []ImageDetail{}
+	for _, name := range cleanTags(names) {
+		if !imageName.MatchString(name) {
+			continue
+		}
+		path, err := s.store.imagePath(scopedImage(number, name))
+		if err != nil {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		config, format, err := image.DecodeConfig(file)
+		file.Close()
+		if err == nil {
+			details = append(details, ImageDetail{
+				Name: name, Bytes: info.Size(), Width: config.Width, Height: config.Height, Format: format,
+			})
+		}
+	}
+	return details
 }

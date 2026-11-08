@@ -26,7 +26,7 @@ export function usePromptFilters(items: Ref<Prompt[]>) {
       (!modelFilter.value || promptModels(item).includes(modelFilter.value)) &&
       (!tagFilter.value || item.tags?.includes(tagFilter.value)) &&
       [item.title, item.body, item.english, item.description, item.category, ...(item.tags ?? []),
-        item.negative, item.parameters, item.author, formatPromptNumber(item.number), '#' + item.number, ...promptModels(item)]
+        item.negative, item.parameters, item.author, item.authorUrl, formatPromptNumber(item.number), '#' + item.number, ...promptModels(item)]
         .some((value) => value?.toLowerCase().includes(keyword))
     ).sort((a, b) => {
       if (sort.value === 'title') return a.title.localeCompare(b.title, 'zh-CN')

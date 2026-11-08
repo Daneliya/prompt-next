@@ -26,12 +26,16 @@ func ensurePromptNumber(tx *sql.Tx, id string, preferred int64) (int64, error) {
 			return preferred, err
 		}
 	}
-	result, err := tx.Exec("INSERT INTO prompt_numbers(prompt_id) VALUES (?)", id)
+	result, err := tx.Exec(`INSERT INTO prompt_numbers(number, prompt_id)
+		SELECT max(?, coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'prompt_numbers'), 0)) + 1, ?`,
+		firstNewPromptNumber-1, id)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
+
+const firstNewPromptNumber = 100_001
 
 const maxPromptNumber = 9_007_199_254_740_991 // JavaScript safe integer limit.
 

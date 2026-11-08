@@ -137,8 +137,12 @@ func (s *Service) DeleteModel(name string) error {
 
 func defaultCategories(kind string) []string {
 	switch kind {
+	case "text":
+		return []string{"效率工具", "编程开发", "创意写作", "数据分析", "教育学习", "商业营销", "生活娱乐", "翻译润色", "其他", "写作", "翻译", "学习", "办公", "编程"}
 	case "art":
-		return []string{"场景", "人物", "产品", "插画", "摄影", "设计", "其他"}
+		return []string{"国风美学", "海报设计", "广告创意", "商品设计", "人像创作", "动物萌宠", "生活分享", "赛博科幻", "壁纸海报", "绘本插画", "动漫动画", "风景摄影", "建筑空间", "Logo设计", "UI界面", "场景", "人物", "产品", "插画", "摄影", "设计", "其他"}
+	case "video":
+		return []string{"短视频制作", "广告宣传", "动画制作", "特效制作", "纪录影片", "教程视频"}
 	case "persona":
 		return []string{"实用助手", "陪伴型", "角色扮演", "自定义"}
 	default:
@@ -245,14 +249,14 @@ func (s *Service) updateCategory(kind, current, name string) error {
 }
 
 func (s *Service) ViewFields(layout string) ([]string, error) {
-	if layout != "cards" && layout != "list" {
+	if !validViewFieldKey(layout) {
 		return nil, errors.New("视图选项无效")
 	}
 	return settingList(s.store.db, "view-fields:"+layout)
 }
 
 func (s *Service) SetViewFields(layout string, fields []string) error {
-	if layout != "cards" && layout != "list" {
+	if !validViewFieldKey(layout) {
 		return errors.New("视图选项无效")
 	}
 	fields = cleanTags(fields)
@@ -262,10 +266,14 @@ func (s *Service) SetViewFields(layout string, fields []string) error {
 	return putSetting(s.store.db, "view-fields:"+layout, stringsJSON(fields))
 }
 
+func validViewFieldKey(key string) bool {
+	return validLayout(strings.TrimPrefix(key, "persona:"))
+}
+
 func validateViewFields(fields []string) error {
 	for _, field := range fields {
 		switch field {
-		case "title", "body", "description", "models", "category", "tags", "number", "created", "updated":
+		case "title", "body", "description", "models", "category", "tags", "number", "created", "updated", "characters":
 		default:
 			return errors.New("展示字段无效")
 		}

@@ -36,11 +36,12 @@ func main() {
 	}
 	defer library.Close(prompts)
 
+	service := &desktop.PromptService{Service: prompts, Version: appVersion()}
 	app := application.New(application.Options{
 		Name:        "Prompt Next",
 		Icon:        appIcon,
 		Description: "离线管理人设和 AI 绘画提示词",
-		Services:    []application.Service{application.NewService(&desktop.PromptService{Service: prompts, Version: appVersion()})},
+		Services:    []application.Service{application.NewService(service)},
 		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(assets), Middleware: library.ImageAssets(prompts)},
 		Mac:         application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true},
 	})
@@ -50,23 +51,32 @@ func main() {
 		MinWidth:        860, MinHeight: 560, URL: "/",
 	})
 	desktop.RememberWindow(app, window, library.DataDirectory(prompts))
-	menu := app.Menu.New()
-	if runtime.GOOS == "darwin" {
-		menu.AddRole(application.AppMenu)
+	service.OnLanguageChange = func(language string) {
+		label := func(chinese, english string) string {
+			if language == "en-US" {
+				return english
+			}
+			return chinese
+		}
+		menu := app.Menu.New()
+		if runtime.GOOS == "darwin" {
+			menu.AddRole(application.AppMenu)
+		}
+		fileMenu := menu.AddSubmenu(label("文件", "File"))
+		fileMenu.Add(label("新建提示词", "New Prompt")).SetAccelerator("CmdOrCtrl+N").OnClick(func(*application.Context) {
+			window.EmitEvent("prompt-next:new")
+		})
+		if runtime.GOOS == "darwin" {
+			menu.AddRole(application.EditMenu)
+		}
+		searchMenu := menu.AddSubmenu(label("搜索", "Search"))
+		searchMenu.Add(label("聚焦搜索框", "Focus Search")).SetAccelerator("CmdOrCtrl+F").OnClick(func(*application.Context) {
+			window.EmitEvent("prompt-next:search")
+		})
+		app.Menu.Set(menu)
+		window.SetMenu(menu)
 	}
-	fileMenu := menu.AddSubmenu("文件")
-	fileMenu.Add("新建提示词").SetAccelerator("CmdOrCtrl+N").OnClick(func(*application.Context) {
-		window.EmitEvent("prompt-next:new")
-	})
-	if runtime.GOOS == "darwin" {
-		menu.AddRole(application.EditMenu)
-	}
-	searchMenu := menu.AddSubmenu("搜索")
-	searchMenu.Add("聚焦搜索框").SetAccelerator("CmdOrCtrl+F").OnClick(func(*application.Context) {
-		window.EmitEvent("prompt-next:search")
-	})
-	app.Menu.Set(menu)
-	window.SetMenu(menu)
+	service.OnLanguageChange(desktop.ReadLanguage())
 	if err := app.Run(); err != nil {
 		log.Print(err)
 	}

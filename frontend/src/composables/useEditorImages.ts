@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { ref, type Ref } from 'vue'
 
 export function imageURL(key: string, thumbnail = false) {
@@ -8,18 +9,19 @@ export function imageURL(key: string, thumbnail = false) {
 export function readImage(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.onerror = () => reject(new Error(t('读取图片失败')))
     reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
     reader.readAsDataURL(file)
   })
 }
 
-export function useEditorImages(busy: Ref<boolean>, showImageError: (message: string) => void) {
-  const draftImages = ref<{ name: string; url: string; file?: File; sourceNumber?: number }[]>([])
+export type DraftImage = { name: string; url: string; file?: File; sourceNumber?: number }
+
+export function useEditorImages(busy: Ref<boolean>, showImageError: (message: string) => void, otherImages: () => DraftImage[]) {
+  const draftImages = ref<DraftImage[]>([])
   const dragFrom = ref<number | null>(null)
   const dragOver = ref<number | null>(null)
   const imageInput = ref<HTMLInputElement>()
-  const imagePreview = ref('')
 
   function clearDraftImages() {
     draftImages.value.forEach((item) => { if (item.file) URL.revokeObjectURL(item.url) })
@@ -72,18 +74,19 @@ export function useEditorImages(busy: Ref<boolean>, showImageError: (message: st
     const files = Array.from(input.files ?? [])
     input.value = ''
     if (files.some((file) => file.size > 12 * 1024 * 1024)) {
-      showImageError('每张图片须在 12 MB 以内')
+      showImageError(t('每张图片须在 12 MB 以内'))
       return
     }
-    const batchSize = draftImages.value.reduce((sum, item) => sum + (item.file?.size ?? 0), 0) +
+    const all = [...draftImages.value, ...otherImages()]
+    const batchSize = all.reduce((sum, item) => sum + (item.file?.size ?? 0), 0) +
       files.reduce((sum, file) => sum + file.size, 0)
-    if (draftImages.value.length + files.length > 24 || batchSize > 40 * 1024 * 1024) {
-      showImageError('每条最多 24 张图片，每次保存的新图片合计须在 40 MB 以内')
+    if (all.length + files.length > 24 || batchSize > 80 * 1024 * 1024) {
+      showImageError(t('每条最多 24 张图片，每次保存的新图片合计须在 80 MB 以内'))
       return
     }
     draftImages.value.push(...files.map((file) => ({ name: '', file, url: URL.createObjectURL(file) })))
   }
 
-  return { draftImages, dragFrom, dragOver, imageInput, imagePreview,
+  return { draftImages, dragFrom, dragOver, imageInput,
     clearDraftImages, removeDraftImage, moveImage, startDrag, overImage, dropImage, endDrag, addImages }
 }

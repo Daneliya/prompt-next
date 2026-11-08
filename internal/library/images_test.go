@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 )
 
 func TestArtworkImagesAndPortableBackup(t *testing.T) {
@@ -39,6 +38,20 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 	if err != nil || len(art.Images) != 1 || art.CreatedAt == "" {
 		t.Fatalf("save: %+v, %v", art, err)
 	}
+	details := s.ImageDetails(art.Number, []string{"../prompts.db", art.Images[0]})
+	want := ImageDetail{Name: art.Images[0], Bytes: int64(pngData.Len()), Width: 4, Height: 4, Format: "png"}
+	if len(details) != 1 || details[0] != want {
+		t.Fatalf("image details = %+v, want %+v", details, want)
+	}
+	for _, upload := range []string{"", encoded} {
+		data, extension, err := ImageForExport(s, art.Number, art.Images[0], upload)
+		if err != nil || extension != ".png" || !bytes.Equal(data, pngData.Bytes()) {
+			t.Fatalf("exported image differs from original: %s, %v", extension, err)
+		}
+	}
+	if _, _, err := ImageForExport(s, art.Number, "../prompts.db", ""); err == nil {
+		t.Fatal("export accepted a non-image path")
+	}
 	art.Body = "阳光下的花园"
 	updated, err := s.SaveWithImages(art, nil)
 	if err != nil || updated.CreatedAt != art.CreatedAt || updated.UpdatedAt < art.UpdatedAt {
@@ -59,24 +72,13 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 	if err != nil || stats.ImageFiles != 1 || stats.ImageBytes != int64(pngData.Len()) || stats.DBBytes == 0 {
 		t.Fatalf("stats: %+v, %v", stats, err)
 	}
-	location := time.FixedZone("UTC+8", 8*60*60)
-	today := time.Date(2026, time.November, 7, 10, 0, 0, 0, location)
-	yesterday := today.AddDate(0, 0, -1)
-	if err := os.Chtimes(filepath.Join(s.store.imagesDir(), scopedImage(art.Number, art.Images[0])), yesterday, yesterday); err != nil {
-		t.Fatal(err)
-	}
-	trend, err := s.storageStatsAt(today)
-	if err != nil || len(trend.RecentImages) != 14 ||
-		trend.RecentImages[12] != (DailyImageCount{Date: "2026-11-06", Count: 1}) ||
-		trend.RecentImages[13] != (DailyImageCount{Date: "2026-11-07", Count: 0}) {
-		t.Fatalf("unexpected daily image counts: %+v, %v", trend.RecentImages, err)
-	}
 
 	items, err := s.ListPrompts()
 	if err != nil {
 		t.Fatal(err)
 	}
-	backup, err := s.store.encodeArchive(items, nil, false)
+	legacyItems := slices.DeleteFunc(items, func(item Prompt) bool { return item.Kind == "text" || item.Kind == "video" })
+	backup, err := s.store.encodeArchive(legacyItems, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +90,11 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored, err := dest.ListPrompts()
-	if err != nil || len(restored) != 3 || restored[0].Body != art.Body || restored[0].English != art.English || len(restored[0].Images) != 1 {
+	index := slices.IndexFunc(restored, func(item Prompt) bool { return item.ID == art.ID })
+	if err != nil || len(restored) != 5 || index < 0 || restored[index].Body != art.Body || restored[index].English != art.English || len(restored[index].Images) != 1 {
 		t.Fatalf("restored prompts: %+v, %v", restored, err)
 	}
-	got, err := os.ReadFile(filepath.Join(dest.store.imagesDir(), scopedImage(restored[0].Number, art.Images[0])))
+	got, err := os.ReadFile(filepath.Join(dest.store.imagesDir(), scopedImage(restored[index].Number, art.Images[0])))
 	if err != nil || !bytes.Equal(got, pngData.Bytes()) {
 		t.Fatalf("restored attachment differs: %v", err)
 	}
@@ -104,7 +107,9 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edit := restored[0]
+	edit := restored[index]
+	edit.UpdatedAt = ""
+
 	edit.Models = []string{"Midjourney", "FLUX"}
 	reordered, err := dest.SaveOrderedImages(edit, []ImageInput{
 		{Data: base64.StdEncoding.EncodeToString(secondPNG.Bytes())},
@@ -136,7 +141,10 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 	if err := dest.RenameModel("Studio Custom", "Studio Next"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dest.DeleteModel("Midjourney"); err == nil {
+	if len(models) < 6 || !slices.Equal(models[:6], []string{"Midjourney V6", "Midjourney V8.2", "GPT Image 2.0", "GPT Image 2.5", "Nano Banana 2", "Nano Banana 2.1"}) {
+		t.Fatalf("versioned models: %v", models)
+	}
+	if err := dest.DeleteModel("Midjourney V6"); err == nil {
 		t.Fatal("built-in model was deleted")
 	}
 	if err := dest.DeleteModel("Studio Next"); err != nil {
@@ -157,4 +165,66 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 		t.Fatalf("persona categories: %+v, %v", personaCategories, err)
 	}
 
+}
+
+func TestReferenceImagesRoundTripAndCleanup(t *testing.T) {
+	source := testLibrary(t, t.TempDir())
+	imageData := func(width int) string {
+		t.Helper()
+		var data bytes.Buffer
+		if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, width, 3))); err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(data.Bytes())
+	}
+	item, err := source.SaveOrderedImages(Prompt{Kind: "art", Title: "两组图片", Body: "正文"}, []ImageInput{
+		{Data: imageData(3)}, {Data: imageData(4), Reference: true},
+	})
+	if err != nil || len(item.Images) != 1 || len(item.ReferenceImages) != 1 || item.Images[0] == item.ReferenceImages[0] {
+		t.Fatalf("image groups = %v, %v, %v", item.Images, item.ReferenceImages, err)
+	}
+	refName := item.ReferenceImages[0]
+	backup, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := testLibrary(t, t.TempDir())
+	if _, err := dest.ImportPrompts(string(backup), true); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := dest.ListPrompts()
+	if err != nil || !slices.ContainsFunc(restored, func(p Prompt) bool {
+		return p.ID == item.ID && slices.Equal(p.Images, item.Images) && slices.Equal(p.ReferenceImages, item.ReferenceImages)
+	}) {
+		t.Fatalf("reference group was not restored: %v", err)
+	}
+	copy, err := dest.SaveOrderedImages(Prompt{Kind: "art", Title: "副本", Body: "正文"}, []ImageInput{
+		{Name: item.Images[0], SourceNumber: item.Number}, {Name: refName, SourceNumber: item.Number, Reference: true},
+	})
+	if err != nil || !slices.Equal(copy.ReferenceImages, item.ReferenceImages) {
+		t.Fatalf("reference group was not copied: %v", err)
+	}
+	batch, err := dest.DeletePrompts([]string{item.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orphaned, err := dest.ListUnreferencedImages(); err != nil || len(orphaned) != 0 {
+		t.Fatalf("referenced files listed for cleanup: %+v, %v", orphaned, err)
+	}
+	if result, err := dest.DeleteTrashPermanently([]TrashRef{{Batch: batch, ID: item.ID}}); err != nil || result.Deleted != 1 || result.CleanupPending {
+		t.Fatalf("purge = %+v, %v", result, err)
+	}
+	for _, check := range []struct {
+		number int64
+		exists bool
+	}{{item.Number, false}, {copy.Number, true}} {
+		path, err := dest.store.imagePath(scopedImage(check.number, refName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = os.Stat(path)
+		if (check.exists && err != nil) || (!check.exists && !os.IsNotExist(err)) {
+			t.Fatalf("reference file for %d: %v", check.number, err)
+		}
+	}
 }

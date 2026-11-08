@@ -22,13 +22,16 @@ type ImageCleanup struct {
 
 func referencedImages(tx *sql.Tx) (map[string]bool, error) {
 	rows, err := tx.Query(`
-		SELECT n.number || '/' || j.value
-  FROM prompts p JOIN prompt_numbers n ON n.prompt_id = p.id, json_each(p.record,'$.images') j
-  WHERE j.type = 'text'
-  UNION
-  SELECT n.number || '/' || j.value
-  FROM deleted_prompts p JOIN prompt_numbers n ON n.prompt_id = p.id, json_each(p.record,'$.images') j
-  WHERE j.type = 'text' AND p.expires_at > ?`, time.Now().Unix())
+		WITH active_records AS (
+			SELECT id, record FROM prompts
+			UNION ALL
+			SELECT id, record FROM deleted_prompts WHERE expires_at > ?
+		), fields(path) AS (VALUES ('$.images'), ('$.referenceImages'))
+		SELECT DISTINCT n.number || '/' || j.value
+		FROM active_records p JOIN prompt_numbers n ON n.prompt_id = p.id
+		CROSS JOIN fields CROSS JOIN json_each(p.record, fields.path) j
+		WHERE j.type = 'text'
+	`, time.Now().Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,10 @@ func (s *Service) CleanUnreferencedImages(names []string) (ImageCleanup, error) 
 }
 
 func (s *promptStore) walkImages(visit func(string, fs.FileInfo)) error {
-	root := s.imagesDir()
+	return walkScopedMedia(s.imagesDir(), imageKey.MatchString, visit)
+}
+
+func walkScopedMedia(root string, validKey func(string) bool, visit func(string, fs.FileInfo)) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if path == root && errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -131,7 +137,7 @@ func (s *promptStore) walkImages(visit func(string, fs.FileInfo)) error {
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() || !imageKey.MatchString(name) {
+		if !entry.Type().IsRegular() || !validKey(name) {
 			return nil
 		}
 		info, err := entry.Info()

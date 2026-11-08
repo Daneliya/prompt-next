@@ -1,7 +1,10 @@
 [
-  "Midjourney",
-  "OpenAI GPT Image",
-  "Google Gemini Image（Nano Banana）",
+  "Midjourney V6",
+  "Midjourney V8.2",
+  "GPT Image 2.0",
+  "GPT Image 2.5",
+  "Nano Banana 2",
+  "Nano Banana 2.1",
   "FLUX",
   "Stable Diffusion",
   "Adobe Firefly",

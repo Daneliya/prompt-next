@@ -16,7 +16,7 @@ type ChosenBackup struct {
 }
 
 func (s *PromptService) ChooseBackup() (ChosenBackup, error) {
-	path, err := application.Get().Dialog.OpenFile().SetTitle("选择要导入的提示词备份").AddFilter("JSON 备份", "*.json").PromptForSingleSelection()
+	path, err := application.Get().Dialog.OpenFile().SetTitle(localizedLabel(ReadLanguage(), "选择要导入的提示词备份", "Choose a Prompt Backup")).AddFilter(localizedLabel(ReadLanguage(), "JSON 备份", "JSON Backup"), "*.json").PromptForSingleSelection()
 	if err != nil || path == "" {
 		return ChosenBackup{}, err
 	}

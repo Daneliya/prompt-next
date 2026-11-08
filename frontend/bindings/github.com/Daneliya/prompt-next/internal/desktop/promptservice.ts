@@ -37,8 +37,20 @@ export function CategoryOptions(kind: string): $CancellablePromise<string[] | nu
     return $Call.ByID(1932736666, kind);
 }
 
+export function ChangeDataFolder(dir: string): $CancellablePromise<boolean> {
+    return $Call.ByID(322791728, dir);
+}
+
 export function ChooseBackup(): $CancellablePromise<$models.ChosenBackup> {
     return $Call.ByID(4119431911);
+}
+
+export function ChooseDataFolder(): $CancellablePromise<string> {
+    return $Call.ByID(151210101);
+}
+
+export function ChooseVideoFiles(keptIDs: string[] | null, existingCount: number): $CancellablePromise<$models.ChosenVideo[] | null> {
+    return $Call.ByID(2447327235, keptIDs, existingCount);
 }
 
 export function CleanUnreferencedImages(names: string[] | null): $CancellablePromise<library$0.ImageCleanup> {
@@ -65,6 +77,10 @@ export function DeleteCategory(kind: string, name: string): $CancellablePromise<
     return $Call.ByID(2109758107, kind, name);
 }
 
+export function DeleteCollection(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2565942439, id);
+}
+
 export function DeleteModel(name: string): $CancellablePromise<void> {
     return $Call.ByID(793281444, name);
 }
@@ -77,12 +93,24 @@ export function DeletePrompts(ids: string[] | null): $CancellablePromise<string>
     return $Call.ByID(665303050, ids);
 }
 
+export function DeleteTrashPermanently(refs: library$0.TrashRef[] | null): $CancellablePromise<library$0.TrashDeletion> {
+    return $Call.ByID(4120416084, refs);
+}
+
 export function DeleteVariablePreset(id: string, name: string): $CancellablePromise<void> {
     return $Call.ByID(738493596, id, name);
 }
 
+export function DiscardImageUploads(ids: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2098375231, ids);
+}
+
 export function ExportBackup(): $CancellablePromise<boolean> {
     return $Call.ByID(2653595180);
+}
+
+export function ExportImage($number: number, name: string, upload: string): $CancellablePromise<boolean> {
+    return $Call.ByID(386305711, $number, name, upload);
 }
 
 export function ExportMarkdown(p: library$0.Prompt): $CancellablePromise<boolean> {
@@ -93,12 +121,20 @@ export function ExportSelected(ids: string[] | null): $CancellablePromise<boolea
     return $Call.ByID(1494774099, ids);
 }
 
+export function GetLanguage(): $CancellablePromise<string> {
+    return $Call.ByID(2584727138);
+}
+
 export function GetLayout(): $CancellablePromise<string> {
     return $Call.ByID(2404944398);
 }
 
 export function GetTheme(): $CancellablePromise<string> {
     return $Call.ByID(3607466157);
+}
+
+export function ImageDetails($number: number, names: string[] | null): $CancellablePromise<library$0.ImageDetail[] | null> {
+    return $Call.ByID(77847633, $number, names);
 }
 
 export function ImportChosenBackup(replace: boolean): $CancellablePromise<library$0.ImportSummary> {
@@ -109,8 +145,16 @@ export function ImportPrompts(text: string, replace: boolean): $CancellablePromi
     return $Call.ByID(1428729236, text, replace);
 }
 
+export function ListCollections(): $CancellablePromise<library$0.PromptCollection[] | null> {
+    return $Call.ByID(2014573233);
+}
+
 export function ListPrompts(): $CancellablePromise<library$0.Prompt[] | null> {
     return $Call.ByID(4062881123);
+}
+
+export function ListTrash(): $CancellablePromise<library$0.TrashEntry[] | null> {
+    return $Call.ByID(3464697294);
 }
 
 export function ListUnreferencedImages(): $CancellablePromise<library$0.OrphanImage[] | null> {
@@ -127,6 +171,10 @@ export function OpenDataFolder(): $CancellablePromise<void> {
 
 export function OpenGitHub(): $CancellablePromise<void> {
     return $Call.ByID(3272358915);
+}
+
+export function OpenWebLink(link: string): $CancellablePromise<void> {
+    return $Call.ByID(922304290, link);
 }
 
 export function PreviewImport(text: string): $CancellablePromise<library$0.ImportSummary> {
@@ -149,6 +197,18 @@ export function RenameTag(kind: string, current: string, name: string): $Cancell
     return $Call.ByID(1450360814, kind, current, name);
 }
 
+export function ResetDataFolder(): $CancellablePromise<boolean> {
+    return $Call.ByID(3327408327);
+}
+
+export function RestoreTrash(refs: library$0.TrashRef[] | null): $CancellablePromise<number> {
+    return $Call.ByID(4127835708, refs);
+}
+
+export function SaveCollection(collection: library$0.PromptCollection): $CancellablePromise<library$0.PromptCollection> {
+    return $Call.ByID(890003037, collection);
+}
+
 export function SaveOrderedImages(prompt: library$0.Prompt, attachments: library$0.ImageInput[] | null): $CancellablePromise<library$0.Prompt> {
     return $Call.ByID(3173583956, prompt, attachments);
 }
@@ -157,12 +217,20 @@ export function SavePrompt(prompt: library$0.Prompt): $CancellablePromise<librar
     return $Call.ByID(3086498839, prompt);
 }
 
+export function SaveVideoWithFiles(prompt: library$0.Prompt, attachments: library$0.ImageInput[] | null, sourceNumber: number, chosenIDs: string[] | null): $CancellablePromise<library$0.Prompt> {
+    return $Call.ByID(650292911, prompt, attachments, sourceNumber, chosenIDs);
+}
+
 export function SaveWithImages(prompt: library$0.Prompt, uploads: string[] | null): $CancellablePromise<library$0.Prompt> {
     return $Call.ByID(4095946691, prompt, uploads);
 }
 
 export function SetFavorite(id: string, favorite: boolean): $CancellablePromise<void> {
     return $Call.ByID(1167341240, id, favorite);
+}
+
+export function SetLanguage(language: string): $CancellablePromise<void> {
+    return $Call.ByID(725162062, language);
 }
 
 export function SetLayout(layout: string): $CancellablePromise<void> {
@@ -181,6 +249,10 @@ export function SetViewFields(layout: string, fields: string[] | null): $Cancell
     return $Call.ByID(1742939124, layout, fields);
 }
 
+export function StageImageUpload(id: string, encoded: string): $CancellablePromise<void> {
+    return $Call.ByID(2725715906, id, encoded);
+}
+
 export function StorageStats(): $CancellablePromise<library$0.StorageStats> {
     return $Call.ByID(1244957420);
 }
@@ -191,6 +263,10 @@ export function UndoDelete(batch: string): $CancellablePromise<void> {
 
 export function VariablePresets(id: string): $CancellablePromise<{ [_ in string]?: { [_ in string]?: string } | null } | null> {
     return $Call.ByID(1008960936, id);
+}
+
+export function VideoDetails($number: number, names: string[] | null): $CancellablePromise<library$0.VideoDetail[] | null> {
+    return $Call.ByID(1654994207, $number, names);
 }
 
 export function ViewFields(layout: string): $CancellablePromise<string[] | null> {

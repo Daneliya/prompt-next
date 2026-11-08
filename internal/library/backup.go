@@ -18,11 +18,13 @@ import (
 const backupFormat = "bigfish-prompt-manager"
 
 type ImportSummary struct {
-	Added      int    `json:"added"`
-	Duplicate  int    `json:"duplicate"`
-	Invalid    int    `json:"invalid"`
-	CanRestore bool   `json:"canRestore"`
-	Snapshot   string `json:"snapshot"`
+	Added         int    `json:"added"`
+	Duplicate     int    `json:"duplicate"`
+	Invalid       int    `json:"invalid"`
+	CanRestore    bool   `json:"canRestore"`
+	IncludesVideo bool   `json:"includesVideo"`
+	IncludesText  bool   `json:"includesText"`
+	Snapshot      string `json:"snapshot"`
 }
 
 type backupFile struct {
@@ -30,6 +32,7 @@ type backupFile struct {
 	Version  int                `json:"version"`
 	Items    []Prompt           `json:"items"`
 	Images   map[string][]byte  `json:"images,omitempty"`
+	Videos   map[string][]byte  `json:"videos,omitempty"`
 	Settings *map[string]string `json:"settings,omitempty"`
 	Partial  bool               `json:"partial,omitempty"`
 }
@@ -86,7 +89,7 @@ func (s *promptStore) snapshot(tx *sql.Tx, items []Prompt) ([]byte, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	settings := map[string]string{}
+	settings := map[string]string{promptCollectionsKey: "[]"}
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
@@ -102,9 +105,12 @@ func (s *promptStore) snapshot(tx *sql.Tx, items []Prompt) ([]byte, error) {
 
 func (s *promptStore) encodeArchive(items []Prompt, settings *map[string]string, partial bool) ([]byte, error) {
 	images := map[string][]byte{}
+	videos := map[string][]byte{}
 	size := 0
+	var hasReferences bool
 	for _, item := range items {
-		for _, name := range item.Images {
+		hasReferences = hasReferences || len(item.ReferenceImages) > 0
+		for _, name := range item.imageNames() {
 			if _, ok := images[name]; ok {
 				continue
 			}
@@ -125,12 +131,36 @@ func (s *promptStore) encodeArchive(items []Prompt, settings *map[string]string,
 			}
 			images[name] = data
 		}
+		for _, name := range item.videoNames() {
+			if _, exists := videos[name]; exists {
+				continue
+			}
+			path, err := s.videoPath(scopedImage(item.Number, name))
+			if err != nil {
+				return nil, err
+			}
+			data, err := readVideoFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("无法读取备份视频：%w", err)
+			}
+			size += len(data)
+			if size > MaxBackupBytes*3/4 {
+				return nil, errors.New("媒体文件超出 128 MB JSON 备份上限，请备份整个应用数据目录")
+			}
+			videos[name] = data
+		}
 	}
 	version := 2
 	if settings != nil || partial {
-		version = 3
+		version = 5
 	}
-	data, err := json.Marshal(backupFile{Format: backupFormat, Version: version, Items: items, Images: images, Settings: settings, Partial: partial})
+	if len(videos) > 0 {
+		version = 7
+	}
+	if hasReferences {
+		version = 8
+	}
+	data, err := json.Marshal(backupFile{Format: backupFormat, Version: version, Items: items, Images: images, Videos: videos, Settings: settings, Partial: partial})
 	if len(data) > MaxBackupBytes {
 		return nil, errors.New("超出 128 MB JSON 备份上限，请备份整个应用数据目录")
 	}
@@ -144,7 +174,10 @@ func (s *promptStore) prepareImport(text string) ([]Prompt, ImportSummary, map[s
 	}
 	needed := map[string][]byte{}
 	for _, item := range items {
-		for _, name := range item.Images {
+		for _, name := range item.imageNames() {
+			needed[name] = nil
+		}
+		for _, name := range item.videoNames() {
 			needed[name] = nil
 		}
 	}
@@ -153,11 +186,21 @@ func (s *promptStore) prepareImport(text string) ([]Prompt, ImportSummary, map[s
 	}
 	var envelope struct {
 		Images map[string][]byte `json:"images"`
+		Videos map[string][]byte `json:"videos"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(text, "\ufeff")), &envelope); err != nil {
 		return nil, summary, nil, err
 	}
 	for name := range needed {
+		if videoName.MatchString(name) {
+			data := envelope.Videos[name]
+			actual, err := checkedVideo(data, filepath.Ext(name))
+			if err != nil || name != actual {
+				return nil, summary, nil, errors.New("备份中的视频缺失或已损坏")
+			}
+			needed[name] = data
+			continue
+		}
 		data := envelope.Images[name]
 		actual, err := checkedImage(data)
 		if err != nil || name != actual {
@@ -191,10 +234,10 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 		return nil, ImportSummary{}, errors.New("文件不是可识别的提示词 JSON")
 	}
 	if (envelope.Format != "" && envelope.Format != backupFormat) ||
-		(envelope.Format == backupFormat && (envelope.Version < 1 || envelope.Version > 3)) {
+		(envelope.Format == backupFormat && (envelope.Version < 1 || envelope.Version > 8)) {
 		return nil, ImportSummary{}, errors.New("不支持该备份格式或版本")
 	}
-	if envelope.Format == backupFormat && envelope.Version == 3 && !envelope.Partial {
+	if envelope.Format == backupFormat && envelope.Version >= 3 && !envelope.Partial {
 		if envelope.Settings == nil {
 			return nil, ImportSummary{}, errors.New("备份缺少设置")
 		}
@@ -218,7 +261,7 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 		} else {
 			p, err = legacyPrompt(raw, favorites)
 		}
-		if err != nil || p.ID == "" || p.validate() != nil {
+		if err != nil || p.ID == "" || (p.Kind == "text" && envelope.Version < 4) || (p.Kind == "video" && envelope.Version < 5) || (p.Video != "" && envelope.Version < 6) || (len(p.Videos) > 0 && envelope.Version < 7) || (len(p.ReferenceImages) > 0 && envelope.Version < 8) || p.validate() != nil {
 			invalid++
 			continue
 		}
@@ -226,20 +269,23 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 		p.UpdatedAt = normalizeDate(p.UpdatedAt, p.CreatedAt)
 		items = append(items, p)
 	}
-	return items, ImportSummary{Invalid: invalid, CanRestore: envelope.Format == backupFormat && !envelope.Partial && invalid == 0}, nil
+	return items, ImportSummary{Invalid: invalid, IncludesText: envelope.Version >= 4, IncludesVideo: envelope.Version >= 5, CanRestore: envelope.Format == backupFormat && !envelope.Partial && invalid == 0}, nil
 }
 
 func validateBackupSetting(key, value string) error {
 	switch {
+	case key == promptCollectionsKey:
+		_, err := decodeCollections(value)
+		return err
 	case key == "theme":
 		if value != "system" && value != "light" && value != "dark" {
 			return errors.New("备份中的主题设置无效")
 		}
 	case key == "layout":
-		if value != "cards" && value != "list" {
+		if !validLayout(value) {
 			return errors.New("备份中的视图设置无效")
 		}
-	case key == "view-fields:cards" || key == "view-fields:list":
+	case strings.HasPrefix(key, "view-fields:") && validViewFieldKey(strings.TrimPrefix(key, "view-fields:")):
 		var fields []string
 		if err := json.Unmarshal([]byte(value), &fields); err != nil {
 			return err
@@ -332,7 +378,7 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 	defer tx.Rollback()
 	if replace {
 		if !summary.CanRestore {
-			return ImportSummary{}, errors.New("只有完整的双库备份可以用于覆盖恢复")
+			return ImportSummary{}, errors.New("只有完整的应用备份可以用于覆盖恢复")
 		}
 		seen := map[string]bool{}
 		for _, item := range incoming {
@@ -364,18 +410,13 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(text, "\ufeff"))), &archive); err != nil {
 			return summary, err
 		}
-		if archive.Version == 3 {
-			if _, err := tx.Exec("DELETE FROM settings"); err != nil {
+		if archive.Version >= 3 {
+			if err := restoreSettings(tx, archive.Settings, summary.IncludesText, summary.IncludesVideo); err != nil {
 				return summary, err
-			}
-			for key, value := range archive.Settings {
-				if err := putSetting(tx, key, value); err != nil {
-					return summary, err
-				}
 			}
 		}
 
-		if _, err := tx.Exec("DELETE FROM prompts"); err != nil {
+		if _, err := tx.Exec("DELETE FROM prompts WHERE (kind != 'text' OR ?) AND (kind != 'video' OR ?)", summary.IncludesText, summary.IncludesVideo); err != nil {
 			return ImportSummary{}, err
 		}
 	}
@@ -389,8 +430,13 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 			if err != nil {
 				return summary, err
 			}
-			for _, name := range item.Images {
+			for _, name := range item.imageNames() {
 				if err := s.store.writeImage(scopedImage(number, name), files[name]); err != nil {
+					return ImportSummary{}, err
+				}
+			}
+			for _, name := range item.videoNames() {
+				if err := s.store.writeVideo(scopedImage(number, name), files[name]); err != nil {
 					return ImportSummary{}, err
 				}
 			}
@@ -405,18 +451,37 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 	return summary, nil
 }
 
+func restoreSettings(tx *sql.Tx, settings map[string]string, includesText, includesVideo bool) error {
+	if _, err := tx.Exec(`DELETE FROM settings
+		WHERE key != ? AND (? OR (key NOT IN ('categories:text', 'view-fields:waterfall') AND key NOT IN
+			(SELECT 'variables:' || id FROM prompts WHERE kind = 'text')))
+		AND (? OR (key != 'categories:video' AND key NOT IN
+			(SELECT 'variables:' || id FROM prompts WHERE kind = 'video')))`, promptCollectionsKey, includesText, includesVideo); err != nil {
+		return err
+	}
+	for key, value := range settings {
+		if err := putSetting(tx, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func Markdown(p Prompt) ([]byte, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
 	}
-	label := "人设提示词"
-	if p.Kind == "art" {
+	label := "提示词"
+	switch p.Kind {
+	case "art", "video":
 		label = "中文提示词"
+	case "persona":
+		label = "人设提示词"
 	}
 	sections := []string{"# " + p.Title}
 	for _, field := range []struct{ label, value string }{
 		{"说明", p.Description}, {"分类", p.Category}, {"标签", strings.Join(p.Tags, "、")},
-		{"作者", p.Author}, {"平台或模型", strings.Join(p.Models, "、")}, {"参数备注", p.Parameters},
+		{"原作者", p.Author}, {"原作者链接", p.AuthorURL}, {"平台或模型", strings.Join(p.Models, "、")}, {"参数备注", p.Parameters},
 		{label, p.Body}, {"英文提示词", p.English}, {"负向提示词", p.Negative},
 	} {
 		if strings.TrimSpace(field.value) != "" {

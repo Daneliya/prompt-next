@@ -33,6 +33,8 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 	for _, err := range []error{
 		source.SetTheme("dark"), source.SetLayout("list"), source.AddCategory("art", "海报"),
 		source.AddModel("测试模型"), source.SetVariablePreset("sample-art", "霓虹", map[string]string{"主色调": "青色"}),
+		source.SetViewFields("cards", []string{"title", "body"}),
+		source.SetViewFields("persona:cards", []string{"title", "characters", "updated"}),
 		dest.SetTheme("light"), dest.AddModel("旧模型"),
 	} {
 		if err != nil {
@@ -61,6 +63,14 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 	if theme != "dark" || layout != "list" || !slices.Equal(models, []string{"测试模型"}) ||
 		!slices.Equal(categories, []string{"海报"}) || presets["霓虹"]["主色调"] != "青色" {
 		t.Fatalf("settings did not round trip: %s %v %v %v", theme, models, categories, presets)
+	}
+	cards, err := dest.ViewFields("cards")
+	if err != nil || !slices.Equal(cards, []string{"title", "body"}) {
+		t.Fatalf("shared card fields = %v, %v", cards, err)
+	}
+	persona, err := dest.ViewFields("persona:cards")
+	if err != nil || !slices.Equal(persona, []string{"title", "characters", "updated"}) {
+		t.Fatalf("persona card fields = %v, %v", persona, err)
 	}
 	snapshot, err := os.ReadFile(result.Snapshot)
 	if err != nil || !bytes.Contains(snapshot, []byte("旧模型")) {
@@ -176,7 +186,7 @@ func TestMigrateExistingWorkspace(t *testing.T) {
 		t.Fatalf("busy_timeout = %d, %v", timeout, err)
 	}
 	var version int
-	if err := s.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+	if err := s.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("user_version = %d, %v", version, err)
 	}
 }
@@ -207,7 +217,7 @@ func TestCategoryAndTagChangesPreserveEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, err = s.ListPrompts()
-	if err != nil || len(items) != 3 || items[0].ID != p.ID || items[0].Category != "" {
+	if err != nil || len(items) != 5 || items[0].ID != p.ID || items[0].Category != "" {
 		t.Fatalf("category removal = %+v, %v", items, err)
 	}
 	md, err := Markdown(Prompt{Kind: "art", Title: "测试", Body: "正文", Parameters: "16:9", Negative: "水印"})
@@ -326,5 +336,263 @@ func TestPromptFoldersMigrateSharedImagesAndKeepNumbers(t *testing.T) {
 		if err := dest.store.db.QueryRow("SELECT number FROM prompt_numbers WHERE prompt_id = ?", id).Scan(&number); err != nil || number != original.Number {
 			t.Fatalf("restored %s has number %d, want %d: %v", id, number, original.Number, err)
 		}
+	}
+}
+
+func TestTextLibraryBackupsAndWaterfallPreferences(t *testing.T) {
+	source := testLibrary(t, t.TempDir())
+	dest := testLibrary(t, t.TempDir())
+	if _, err := source.store.db.Exec("DELETE FROM prompts WHERE kind IN ('text', 'video')"); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyV3 := strings.Replace(string(legacy), `"version":5`, `"version":3`, 1)
+
+	item, err := source.SavePrompt(Prompt{Kind: "text", Title: "摘要", Body: "用三句话概括 {{文章}}", Category: "写作"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.SaveWithImages(Prompt{Kind: "text", Title: "摘要", Body: "正文"}, []string{"unused"}); err == nil {
+		t.Fatal("text prompt accepted an attachment")
+	}
+	if err := source.SetLayout("waterfall"); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.SetViewFields("waterfall", []string{"title", "tags"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.AddCategory("text", "摘要"); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.SetVariablePreset(item.ID, "示例", map[string]string{"文章": "一段正文"}); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := dest.ImportPrompts(string(backup), true); err != nil || !result.IncludesText {
+		t.Fatalf("restore = %+v, %v", result, err)
+	}
+	layout, err := dest.GetLayout()
+	if err != nil || layout != "waterfall" {
+		t.Fatalf("restored layout = %q, %v", layout, err)
+	}
+	if result, err := dest.ImportPrompts(legacyV3, true); err != nil || result.IncludesText {
+		t.Fatalf("legacy restore = %+v, %v", result, err)
+	}
+	items, err := dest.ListPrompts()
+	if err != nil || !slices.ContainsFunc(items, func(saved Prompt) bool {
+		return saved.ID == item.ID && saved.Body == item.Body && saved.Kind == "text" && saved.Number == item.Number
+	}) {
+		t.Fatalf("legacy restore did not preserve the text prompt: %v", err)
+	}
+	fields, err := dest.ViewFields("waterfall")
+	if err != nil || !slices.Equal(fields, []string{"title", "tags"}) {
+		t.Fatalf("waterfall fields = %v, %v", fields, err)
+	}
+	categories, err := dest.CustomCategories("text")
+	if err != nil || !slices.Contains(categories, "摘要") {
+		t.Fatalf("text categories = %v, %v", categories, err)
+	}
+	presets, err := dest.VariablePresets(item.ID)
+	if err != nil || presets["示例"]["文章"] != "一段正文" {
+		t.Fatalf("text presets = %v, %v", presets, err)
+	}
+}
+
+func TestLibraryExamplesAndPromptNumbers(t *testing.T) {
+	s := testLibrary(t, t.TempDir())
+	legacy, err := s.ListPrompts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, kind := range map[string]string{"sample-text": "text", "sample-video": "video"} {
+		if !slices.ContainsFunc(legacy, func(p Prompt) bool {
+			return p.ID == id && p.Kind == kind && p.Body != "" && p.Number >= firstNewPromptNumber
+		}) {
+			t.Fatalf("missing %s example", kind)
+		}
+	}
+	prompt := Prompt{Kind: "text", Title: "编号", Body: "正文"}
+	first, err := s.SavePrompt(prompt)
+	if err != nil || first.Number != 100003 {
+		t.Fatalf("first prompt = %d, %v", first.Number, err)
+	}
+	if _, err := s.DeletePrompts([]string{first.ID}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.SavePrompt(prompt)
+	if err != nil || second.Number != first.Number+1 {
+		t.Fatalf("second prompt = %d, %v", second.Number, err)
+	}
+	for _, original := range legacy {
+		var number int64
+		if err := s.store.db.QueryRow("SELECT number FROM prompt_numbers WHERE prompt_id = ?", original.ID).Scan(&number); err != nil || number != original.Number {
+			t.Fatalf("existing prompt %s changed number: %d, %v", original.ID, number, err)
+		}
+	}
+	if _, err := s.DeletePrompts([]string{"sample-text"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListPrompts()
+	if err != nil || slices.ContainsFunc(items, func(p Prompt) bool { return p.ID == "sample-text" }) {
+		t.Fatalf("reopening regenerated a deleted example: %v", err)
+	}
+}
+
+func TestPromptCollectionsRestoreAndUndo(t *testing.T) {
+	source := testLibrary(t, t.TempDir())
+	collection, err := source.SaveCollection(PromptCollection{
+		Name: "雨夜变体", Description: "测试合集说明", PromptIDs: []string{"sample-art", "sample-persona", "sample-art"},
+	})
+	if err != nil || collection.ID == "" || !slices.Equal(collection.PromptIDs, []string{"sample-art", "sample-persona"}) {
+		t.Fatalf("saved collection = %+v, %v", collection, err)
+	}
+	if _, err := source.SaveCollection(PromptCollection{Name: "无效", PromptIDs: []string{"missing"}}); err == nil {
+		t.Fatal("collection accepted a missing new member")
+	}
+	batch, err := source.DeletePrompts([]string{"sample-art"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collection.Name = "雨夜系列"
+	if _, err := source.SaveCollection(collection); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.UndoDelete(batch); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := testLibrary(t, t.TempDir())
+	if _, err := dest.ImportPrompts(string(backup), true); err != nil {
+		t.Fatal(err)
+	}
+	collections, err := dest.ListCollections()
+	if err != nil || len(collections) != 1 || collections[0].Name != collection.Name || collections[0].Description != collection.Description ||
+		!slices.Equal(collections[0].PromptIDs, collection.PromptIDs) {
+		t.Fatalf("restored collections = %+v, %v", collections, err)
+	}
+	if err := dest.DeleteCollection(collection.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err := dest.ListPrompts()
+	if err != nil || len(items) != 4 {
+		t.Fatalf("deleting collection changed its prompts: %v, %v", items, err)
+	}
+}
+
+func TestVideoAuthorAndTrashRoundTrip(t *testing.T) {
+	source := testLibrary(t, t.TempDir())
+	if _, err := source.store.db.Exec("DELETE FROM prompts WHERE kind = 'video'"); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	video, err := source.SavePrompt(Prompt{
+		Kind: "video", Title: "城市分镜", English: "A slow dolly shot",
+		Author: "作者", AuthorURL: "https://example.com/author", VideoURL: "https://example.com/video",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	video.AuthorURL = "https://example.com/updated-author"
+	video, err = source.SavePrompt(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBatch, err := source.DeletePrompts([]string{video.ID, "sample-art"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBatch, err := source.DeletePrompts([]string{"sample-persona"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trash, err := source.ListTrash()
+	if err != nil || len(trash) != 3 {
+		t.Fatalf("trash = %+v, %v", trash, err)
+	}
+	refs := []TrashRef{{Batch: firstBatch, ID: video.ID}, {Batch: secondBatch, ID: "sample-persona"}}
+	if count, err := source.RestoreTrash(refs); err != nil || count != 2 {
+		t.Fatalf("restore from multiple batches = %d, %v", count, err)
+	}
+	trash, err = source.ListTrash()
+	if err != nil || len(trash) != 1 || trash[0].Ref.ID != "sample-art" {
+		t.Fatalf("trash after partial recovery = %+v, %v", trash, err)
+	}
+	full, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := testLibrary(t, t.TempDir())
+	if _, err := dest.ImportPrompts(string(full), true); err != nil {
+		t.Fatal(err)
+	}
+	legacyV4 := strings.Replace(string(legacy), `"version":5`, `"version":4`, 1)
+	if _, err := dest.ImportPrompts(legacyV4, true); err != nil {
+		t.Fatal(err)
+	}
+	items, err := dest.ListPrompts()
+	if err != nil || !slices.ContainsFunc(items, func(item Prompt) bool {
+		return item.ID == video.ID && item.Number == video.Number && item.Author == video.Author &&
+			item.AuthorURL == video.AuthorURL && item.VideoURL == video.VideoURL
+	}) {
+		t.Fatalf("video or attribution was lost: %v", err)
+	}
+	if _, err := dest.SavePrompt(Prompt{Kind: "text", Title: "链接", Body: "测试", AuthorURL: "javascript:alert(1)"}); err == nil {
+		t.Fatal("unsafe author URL accepted")
+	}
+}
+
+func TestEditableDatesAndRecentPromptCounts(t *testing.T) {
+	s := testLibrary(t, t.TempDir())
+	local := time.FixedZone("UTC+8", 8*60*60)
+	today := time.Date(2031, 6, 14, 10, 0, 0, 0, local)
+	var entry Prompt
+	for _, kind := range []string{"text", "art", "video", "persona"} {
+		saved, err := s.SavePrompt(Prompt{
+			Kind: kind, Title: kind, Body: "正文", CreatedAt: "2031-06-13T23:30:00+08:00", UpdatedAt: "2031-06-14T08:30:00+08:00",
+		})
+		if err != nil || saved.CreatedAt != "2031-06-13T15:30:00.000000000Z" || saved.UpdatedAt != "2031-06-14T00:30:00.000000000Z" {
+			t.Fatalf("save dates = %s, %s, %v", saved.CreatedAt, saved.UpdatedAt, err)
+		}
+		entry = saved
+	}
+	entry.CreatedAt = "2031-06-13T16:01:00Z" // The next day in the local timezone.
+	entry.UpdatedAt = "2031-06-14T01:02:03Z"
+	saved, err := s.SavePrompt(entry)
+	if err != nil || saved.UpdatedAt != "2031-06-14T01:02:03.000000000Z" {
+		t.Fatalf("edit dates = %+v, %v", saved, err)
+	}
+	items, err := s.ListPrompts()
+	if err != nil || items[0].ID != entry.ID || items[0].CreatedAt != saved.CreatedAt || items[0].UpdatedAt != saved.UpdatedAt {
+		t.Fatalf("dates not persisted or ordered: %v", err)
+	}
+	stats, err := s.storageStatsAt(today)
+	if err != nil || len(stats.RecentPrompts) != 14 ||
+		stats.RecentPrompts[12] != (DailyPromptCount{Date: "2031-06-13", Count: 3}) ||
+		stats.RecentPrompts[13] != (DailyPromptCount{Date: "2031-06-14", Count: 1}) {
+		t.Fatalf("recent prompts = %+v, %v", stats.RecentPrompts, err)
+	}
+	saved.CreatedAt, saved.UpdatedAt = "", ""
+	auto, err := s.SavePrompt(saved)
+	if err != nil || auto.CreatedAt != "2031-06-13T16:01:00.000000000Z" || auto.UpdatedAt == "" || auto.UpdatedAt == entry.UpdatedAt {
+		t.Fatalf("auto dates = %s, %s, %v", auto.CreatedAt, auto.UpdatedAt, err)
+	}
+	entry.UpdatedAt = "invalid"
+	if _, err := s.SavePrompt(entry); err == nil {
+		t.Fatal("invalid timestamp accepted")
 	}
 }
