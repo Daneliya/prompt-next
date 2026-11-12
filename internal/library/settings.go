@@ -302,7 +302,7 @@ func validViewFieldKey(key string) bool {
 func validateViewFields(fields []string) error {
 	for _, field := range fields {
 		switch field {
-		case "title", "body", "description", "models", "category", "tags", "number", "created", "updated", "characters":
+		case "title", "body", "description", "models", "category", "tags", "number", "created", "updated", "characters", "author":
 		default:
 			return errors.New("展示字段无效")
 		}

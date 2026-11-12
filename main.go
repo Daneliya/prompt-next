@@ -45,13 +45,26 @@ func main() {
 		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(assets), Middleware: library.ImageAssets(prompts)},
 		Mac:         application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true},
 	})
-	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	windowOptions := application.WebviewWindowOptions{
 		Title: "Prompt Next", Width: 1280, Height: 800,
 		InitialPosition: application.WindowCentered,
 		MinWidth:        860, MinHeight: 560, URL: "/",
-	})
+		Mac: application.MacWindow{TitleBar: application.MacTitleBarHidden},
+	}
+	if runtime.GOOS == "windows" {
+		windowOptions.Frameless = true
+		windowOptions.Windows.DisableMenu = true
+		windowOptions.KeyBindings = map[string]func(application.Window){
+			"Ctrl+N": func(window application.Window) { window.EmitEvent("prompt-next:new") },
+			"Ctrl+F": func(window application.Window) { window.EmitEvent("prompt-next:search") },
+		}
+	}
+	window := app.Window.NewWithOptions(windowOptions)
 	desktop.RememberWindow(app, window, library.DataDirectory(prompts))
 	service.OnLanguageChange = func(language string) {
+		if runtime.GOOS == "windows" {
+			return
+		}
 		label := func(chinese, english string) string {
 			if language == "en-US" {
 				return english

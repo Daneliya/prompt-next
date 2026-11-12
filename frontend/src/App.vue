@@ -1,36 +1,47 @@
 <script setup lang="ts">
+import { translateBackendError } from './backendErrors'
 import { language, t } from './i18n'
-import { computed, onMounted, onUnmounted, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, nextTick, ref, shallowRef, watch } from 'vue'
 import {
-  darkTheme, zhCN, enUS, dateZhCN, dateEnUS, NAlert, NButton, NCheckbox, NCheckboxGroup, NConfigProvider, NDatePicker, NInput, NModal, NPopconfirm, NPopover,
+  darkTheme, zhCN, enUS, dateZhCN, dateEnUS, NAlert, NButton, NCheckbox, NCheckboxGroup, NConfigProvider, NInput, NModal, NPopconfirm, NPopover,
   NRadioButton, NRadioGroup, NSelect, NTag,
 } from 'naive-ui'
 import { PromptService } from '../bindings/github.com/Daneliya/prompt-next/internal/desktop'
-import { Events } from '@wailsio/runtime'
-import { formatPromptNumber, promptCharacterCount, type Kind, type Prompt } from './prompt'
+import { Events, System, Window } from '@wailsio/runtime'
+import { formatPromptNumber, libraries, videoAsset, type Kind, type Prompt } from './prompt'
+import PromptSource from './components/PromptSource.vue'
+import PromptResults from './components/PromptResults.vue'
+import PromptRow from './components/PromptRow.vue'
 import { countLabels, promptModels, usePromptFilters } from './composables/usePromptFilters'
 import { imageURL, readImage, useEditorImages, type DraftImage } from './composables/useEditorImages'
+import { useDebouncedQuery } from './composables/useDebouncedQuery'
+import { useStorageStats } from './composables/useStorageStats'
 import { useBackupImport } from './composables/useBackupImport'
 import ImageCleanupDialog from './components/ImageCleanupDialog.vue'
 import PromptTrash from './components/PromptTrash.vue'
 import PromptCollections from './components/PromptCollections.vue'
 import PromptFold from './components/PromptFold.vue'
-import EditorImageGroup from './components/EditorImageGroup.vue'
+import PromptEditor from './components/PromptEditor.vue'
 import ImagePreviewViewport from './components/ImagePreviewViewport.vue'
 import VideoCover from './components/VideoCover.vue'
 import AppIcon from './components/AppIcon.vue'
-import DistributionChart from './components/DistributionChart.vue'
-import PromptTrend from './components/PromptTrend.vue'
+import WorkspaceHome from './components/WorkspaceHome.vue'
+import WorkspaceSettings, { type SettingsSection } from './components/WorkspaceSettings.vue'
+import { accentTokens } from './designTokens'
 import { desktopTheme } from './desktopTheme'
 import './workspace.css'
 
+const AuthorDirectory = defineAsyncComponent(() => import('./components/AuthorDirectory.vue'))
+
 type Theme = 'system' | 'light' | 'dark'
-const libraries = [
-  { kind: 'text', label: '文本提示词库', icon: 'text', description: '写作、翻译、学习与日常任务' },
-  { kind: 'art', label: '绘画提示词库', icon: 'art', description: '画面描述、风格与生成参数' },
-  { kind: 'video', label: '视频提示词库', icon: 'video', description: '镜头、动作、分镜与视频生成提示词' },
-  { kind: 'persona', label: '大肥鱼人设库', icon: 'fish', description: '角色设定与助手指令' },
-] as const
+const isMac = System.IsMac() || /\bMacintosh\b/.test(navigator.userAgent)
+const isWindows = System.IsWindows() || /\bWindows\b/.test(navigator.userAgent)
+const windowMaximised = ref(false)
+const maximiseLabel = computed(() => t(windowMaximised.value ? '还原窗口' : '最大化窗口'))
+
+function runWindowAction(action: Promise<void>) {
+  void action.catch(showError)
+}
 
 type Collection = Awaited<ReturnType<typeof PromptService.SaveCollection>>
 const collections = ref<Collection[]>([])
@@ -39,9 +50,19 @@ const collectionId = ref('')
 const collectionSeed = ref('')
 const collectionsPageKey = ref(0)
 
-const prompts = ref<Prompt[]>([])
+const prompts = shallowRef<Prompt[]>([])
 const kind = ref<Kind>('text')
 const homeOpen = ref(true)
+type Author = NonNullable<Awaited<ReturnType<typeof PromptService.ListAuthors>>>[number]
+const authors = ref<Author[]>([])
+const authorsOpen = ref(false)
+const authorDirectory = ref<InstanceType<typeof AuthorDirectory>>()
+const authorDraft = ref<Author>()
+const authorPage = ref<{ sourceName: string; previousId: string; previousScroll: number; previousPage: number; fromDirectory: boolean }>()
+const authorKind = ref<Kind | ''>('')
+const listPane = ref<HTMLElement>()
+const promptResults = ref<InstanceType<typeof PromptResults>>()
+const browsePage = ref(1)
 const layoutOptions = [
   { value: 'cards', label: '卡片', icon: 'cards' },
   { value: 'list', label: '列表', icon: 'list' },
@@ -52,7 +73,9 @@ type Layout = (typeof layoutOptions)[number]['value']
 function isLayout(value: unknown): value is Layout {
   return layoutOptions.some(option => option.value === value)
 }
-const layout = ref<Layout>('cards')
+const libraryLayout = ref<Layout>('cards')
+const authorLayout = ref<Layout>('cards')
+const layout = computed(() => authorPage.value ? authorLayout.value : libraryLayout.value)
 const viewFieldOptions = [
   { value: 'title', label: '标题' },
   { value: 'body', label: '提示词' },
@@ -60,6 +83,7 @@ const viewFieldOptions = [
   { value: 'models', label: 'AI 模型' },
   { value: 'category', label: '分类' },
   { value: 'tags', label: '标签' },
+  { value: 'author', label: '原作者' },
   { value: 'number', label: '编号' },
   { value: 'created', label: '创建时间' },
   { value: 'updated', label: '更新时间' },
@@ -68,7 +92,7 @@ const defaultViewFields = ['title', 'body', 'models', 'category', 'number']
 const waterfallFields = [...defaultViewFields, 'tags']
 const personaFields = ['title', 'category', 'characters', 'description', 'number', 'created', 'updated']
 const personaFieldOptions = viewFieldOptions
-  .filter(field => personaFields.includes(field.value))
+  .filter(field => personaFields.includes(field.value) || field.value === 'author')
   .map(field => field.value === 'description' ? { ...field, label: '简介' } : field)
   .concat({ value: 'characters', label: '字数' })
 const viewFieldDefaults = {
@@ -80,8 +104,9 @@ const viewFields = ref<Partial<Record<ViewFieldKey, string[]>>>({})
 const fieldKey = computed<ViewFieldKey>(() => kind.value === 'persona' ? `persona:${layout.value}` : layout.value)
 const currentFields = computed(() => viewFields.value[fieldKey.value] ?? viewFieldDefaults[fieldKey.value])
 const layoutLabel = computed(() => t(layoutOptions.find(option => option.value === layout.value)?.label))
-const visibleFields = computed(() => new Set(currentFields.value))
-const writtenLibrary = computed(() => kind.value === 'text' || kind.value === 'persona')
+const authorFields = [...defaultViewFields, 'description']
+const visibleFields = computed(() => new Set(authorPage.value ? authorFields : currentFields.value))
+const writtenLibrary = computed(() => authorPage.value ? !!authorKind.value && !hasMedia(authorKind.value) : !hasMedia(kind.value))
 
 type ModelKind = 'art' | 'video'
 type ModelCatalog = Awaited<ReturnType<typeof PromptService.Models>>
@@ -145,7 +170,6 @@ let menuUnsubscribe: (() => void)[] = []
 
 const modelQuery = ref('')
 const modelPickerOpen = ref(false)
-const stats = ref<Awaited<ReturnType<typeof PromptService.StorageStats>>>()
 const sortOptions = computed(() => [
   { label: '最近更新', englishLabel: 'Updated', value: 'updated' },
   { label: '最新创建', value: 'created' },
@@ -169,16 +193,11 @@ const values = ref<Record<string, string>>(Object.create(null))
 const fillVariables = ref(false)
 const settingsOpen = ref(false)
 const dataFolderChange = ref<{ directory: string } | 'default'>()
-const settingsHeading = ref<HTMLElement>()
-const settingsSections = [
-  { key: 'appearance', label: '外观', icon: 'settings' },
-  { key: 'models', label: 'AI 模型', icon: 'art' },
-  { key: 'categories', label: '分类', icon: 'folder' },
-  { key: 'tags', label: '标签', icon: 'tag' },
-  { key: 'data', label: '数据管理', icon: 'disk' },
-  { key: 'about', label: '关于', icon: 'persona' },
-] as const
-const settingsSection = ref<(typeof settingsSections)[number]['key']>('appearance')
+const settingsSection = ref<SettingsSection>('appearance')
+const { stats, refresh: refreshStats, invalidate: invalidateStats } = useStorageStats(
+  computed(() => (homeOpen.value && !collectionsOpen.value) || (settingsOpen.value && settingsSection.value === 'data')),
+  showError,
+)
 const discardOpen = ref(false)
 const theme = ref<Theme>('system')
 const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -208,10 +227,54 @@ let nextAction: (() => void) | undefined
 
 const isDark = computed(() => theme.value === 'dark' || (theme.value === 'system' && systemDark.value))
 const themeOverrides = computed(() => desktopTheme(isDark.value))
+const workspaceTheme = computed(() => ({ '--accent': accentTokens(isDark.value).accent }))
 const library = computed(() => libraries.find((item) => item.kind === kind.value)!)
 const libraryItems = computed(() => prompts.value.filter((item) => item.kind === kind.value))
 const { sort, modelFilter, tagFilter, category, favoritesOnly, query, results } = usePromptFilters(libraryItems)
 const searchText = ref('')
+const commitSearch = useDebouncedQuery(searchText, query)
+const authorsByName = computed(() => new Map(authors.value.map(author => [author.sourceName, author])))
+const promptsByAuthor = computed(() => {
+  const grouped = new Map<string, Prompt[]>()
+  for (const item of prompts.value) {
+    const name = item.author?.trim()
+    if (!name) continue
+    const group = grouped.get(name)
+    if (group) group.push(item)
+    else grouped.set(name, [item])
+  }
+  return grouped
+})
+const activeAuthor = computed(() => authorsByName.value.get(authorPage.value?.sourceName ?? ''))
+const authorPrompts = computed(() => promptsByAuthor.value.get(authorPage.value?.sourceName ?? '') ?? [])
+const authorOptions = computed(() => authors.value.map(author => ({
+  value: author.sourceName,
+  label: author.name === author.sourceName ? author.name : `${author.name} (${author.sourceName})`,
+})))
+const authorCounts = computed(() => ({ text: 0, art: 0, video: 0, persona: 0, ...Object.fromEntries(
+  countLabels(authorPrompts.value.map(item => item.kind)).map(({ name, count }) => [name, count]),
+) }))
+const authorItems = computed(() => authorPrompts.value.filter(item => !authorKind.value || item.kind === authorKind.value))
+const { sort: authorSort, query: authorQuery, results: authorResults } = usePromptFilters(authorItems)
+const authorSearchText = ref('')
+const commitAuthorSearch = useDebouncedQuery(authorSearchText, authorQuery)
+const displayedResults = computed(() => authorPage.value ? authorResults.value : results.value)
+const activeQuery = computed(() => authorPage.value ? authorQuery.value : query.value)
+function resultScroller() {
+  if (authorsOpen.value) return authorDirectory.value?.scrollContainer()
+  return (layout.value === 'list' ? promptResults.value?.scrollContainer() : undefined) ?? listPane.value
+}
+
+watch([kind, layout, activeQuery, sort, authorSort, category, modelFilter, tagFilter, favoritesOnly, authorKind], () => {
+  browsePage.value = 1
+  const scroller = resultScroller()
+  if (scroller) scroller.scrollTop = 0
+}, { flush: 'sync' })
+watch(browsePage, () => {
+  if (listPane.value) listPane.value.scrollTop = 0
+})
+
+const authorName = computed(() => activeAuthor.value?.name ?? authorPage.value?.sourceName ?? '')
 const groupedTags = computed(() => countLabels(libraryItems.value.flatMap(item => item.tags ?? []))
   .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN')))
 const managedTags = computed(() => countLabels(prompts.value.filter(item => item.kind === settingsCategoryKind.value)
@@ -239,15 +302,7 @@ const categoryOptions = computed(() => options([
 ]))
 const editorModels = computed(() => [...new Set([...modelsFor(draft.value?.kind ?? kind.value), ...(draft.value?.models ?? [])])]
   .filter((name) => name.toLowerCase().includes(modelQuery.value.trim().toLowerCase())))
-const recent = computed(() => prompts.value.slice(0, 6))
-const artwork = computed(() => prompts.value.filter(item => item.kind === 'art'))
-const categoryDistribution = computed(() => countLabels(artwork.value.map(item => item.category || t('未分类'))))
-const modelDistribution = computed(() => countLabels(artwork.value.flatMap(item => {
-  const names = promptModels(item)
-  return names.length ? names : [t('未选模型')]
-})))
-
-const selected = computed(() => results.value.find((item) => item.id === selectedId.value))
+const selected = computed(() => displayedResults.value.find((item) => item.id === selectedId.value))
 watch(selected, item => {
   if (item) void loadImageDetails(item.number, [...(item.images ?? []), ...(item.referenceImages ?? [])])
 })
@@ -280,7 +335,7 @@ function notify(text: string, type: 'success' | 'error' = 'success') {
 
 function showError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
-  notify(message.includes('unknown bound method id') ? t('前端与桌面程序版本不一致，请退出并重新启动最新版。') : message, 'error')
+  notify(message.includes('unknown bound method id') ? t('前端与桌面程序版本不一致，请退出并重新启动最新版。') : language.value === 'en-US' ? translateBackendError(t(message)) : message, 'error')
 }
 
 async function perform(action: () => Promise<void>) {
@@ -290,8 +345,25 @@ async function perform(action: () => Promise<void>) {
 }
 
 async function reload() {
-  prompts.value = await PromptService.ListPrompts() ?? []
-  stats.value = await PromptService.StorageStats()
+  const [items, profiles] = await Promise.all([PromptService.ListPrompts(), PromptService.ListAuthors()])
+  prompts.value = items ?? []
+  authors.value = profiles ?? []
+}
+
+function replacePrompts(items: Prompt[], remove: (item: Prompt) => boolean) {
+  prompts.value = [...prompts.value.filter(item => !remove(item)), ...items]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+}
+
+async function refreshPrompts(ids: string[]) {
+  const wanted = new Set(ids)
+  const items = await PromptService.PromptsByIDs(ids)
+  replacePrompts(items ?? [], item => wanted.has(item.id))
+}
+
+async function refreshKind(target: Kind) {
+  const items = await PromptService.ListPromptsByKind(target)
+  replacePrompts(items ?? [], item => item.kind === target)
 }
 
 const memoryUsage = ref<Awaited<ReturnType<typeof PromptService.MemoryUsage>>>()
@@ -325,19 +397,29 @@ onMounted(async () => {
   media.addEventListener('change', onSystemTheme)
   menuUnsubscribe = [
     Events.On('prompt-next:new', () => {
-      if (!loading.value && !settingsOpen.value && !pendingImport.value && !imagePreview.value && !videoPreview.value && !collectionsOpen.value && !trashOpen.value) startEdit()
+      if (!loading.value && !settingsOpen.value && !pendingImport.value && !imagePreview.value && !videoPreview.value && !collectionsOpen.value && !trashOpen.value && !authorPage.value && !authorsOpen.value && !authorDraft.value) startEdit()
     }),
     Events.On('prompt-next:search', () => {
-      if (draft.value || settingsOpen.value || pendingImport.value || collectionsOpen.value || trashOpen.value) return
+      if (draft.value || settingsOpen.value || pendingImport.value || collectionsOpen.value || trashOpen.value || authorDraft.value) return
       if (homeOpen.value) switchLibrary(kind.value)
-      void nextTick(() => searchInput.value?.focus())
+      void nextTick(() => {
+        if (authorsOpen.value) authorDirectory.value?.focusSearch()
+        else searchInput.value?.focus()
+      })
     }),
   ]
+  if (isWindows) {
+    menuUnsubscribe.push(
+      Events.On(Events.Types.Windows.WindowMaximise, () => { windowMaximised.value = true }),
+      Events.On(Events.Types.Windows.WindowUnMaximise, () => { windowMaximised.value = false }),
+    )
+    void Window.IsMaximised().then(value => { windowMaximised.value = value }).catch(showError)
+  }
   try {
     const savedLanguage = await PromptService.GetLanguage()
     if (savedLanguage === 'en-US') language.value = savedLanguage
-    await reload()
-    if (stats.value?.locationWarning) notify(stats.value.locationWarning, 'error')
+    await Promise.all([reload(), refreshStats()])
+    if (stats.value?.locationWarning) showError(stats.value.locationWarning)
     const legacyLayout = localStorage.getItem('prompt-layout')
     if (legacyLayout === 'cards' || legacyLayout === 'list') {
       if (!await PromptService.GetLayout()) await PromptService.SetLayout(legacyLayout)
@@ -384,10 +466,12 @@ function discard() {
 }
 
 function switchLibrary(next: Kind, id = '') {
-  if (!homeOpen.value && !collectionsOpen.value && kind.value === next && !id) return
+  if (!homeOpen.value && !collectionsOpen.value && !authorsOpen.value && !authorPage.value && kind.value === next && !id) return
   navigate(() => {
     homeOpen.value = false
     collectionsOpen.value = false
+    authorPage.value = undefined
+    authorsOpen.value = false
     kind.value = next
     category.value = ''
     favoritesOnly.value = false
@@ -400,16 +484,92 @@ function switchLibrary(next: Kind, id = '') {
   })
 }
 
+function authorDisplayName(sourceName: string) {
+  const name = sourceName?.trim()
+  return authorsByName.value.get(name)?.name ?? name
+}
+
+function showAuthors() {
+  navigate(() => {
+    homeOpen.value = false
+    collectionsOpen.value = false
+    authorPage.value = undefined
+    authorsOpen.value = true
+    selectedId.value = ''
+  })
+}
+
+function openAuthor(sourceName: string) {
+  const name = sourceName?.trim()
+  if (!name || authorPage.value?.sourceName === name) return
+  navigate(() => {
+    authorPage.value = { sourceName: name, previousId: selectedId.value, previousScroll: resultScroller()?.scrollTop ?? 0, previousPage: browsePage.value, fromDirectory: authorsOpen.value }
+    authorsOpen.value = false
+    authorLayout.value = libraryLayout.value
+    browsePage.value = 1
+    authorKind.value = ''
+    authorSearchText.value = ''
+    authorSort.value = 'updated'
+    selectedId.value = ''
+    void nextTick(() => { const scroller = resultScroller(); if (scroller) scroller.scrollTop = 0 })
+  })
+}
+
+function closeAuthor() {
+  const page = authorPage.value
+  if (!page) return
+  navigate(() => {
+    authorPage.value = undefined
+    authorsOpen.value = page.fromDirectory
+    selectedId.value = page.previousId
+    browsePage.value = page.previousPage
+    void nextTick(() => { const scroller = resultScroller(); if (scroller) scroller.scrollTop = page.previousScroll })
+  })
+}
+
+function editAuthor(author: Author) {
+  authorDraft.value = { ...author }
+}
+
+function saveAuthor() {
+  const draft = authorDraft.value
+  if (!draft?.name.trim()) return
+  void perform(async () => {
+    const saved = await PromptService.SaveAuthor(draft)
+    authors.value = authors.value.map(author => author.sourceName === saved.sourceName ? saved : author)
+    authorDraft.value = undefined
+    notify(t('作者资料已保存'))
+  })
+}
+
+function filterAuthor(next: Kind | '') {
+  if (authorKind.value === next) return
+  navigate(() => {
+    authorKind.value = next
+    selectedId.value = ''
+    if (listPane.value) listPane.value.scrollTop = 0
+  })
+}
+
 function submitSearch() {
-  query.value = searchText.value.trim()
+  if (authorPage.value) commitAuthorSearch()
+  else commitSearch()
 }
 
 function updateSearchText(value: string) {
+  if (authorPage.value) {
+    authorSearchText.value = value
+    return
+  }
   searchText.value = value
-  if (!value.trim()) query.value = ''
 }
 
 function resetSearch() {
+  if (authorPage.value) {
+    authorSearchText.value = ''
+    authorSort.value = 'updated'
+    return
+  }
   searchText.value = ''
   query.value = ''
   category.value = ''
@@ -430,7 +590,7 @@ function saveCollection(collection: Collection) {
   void perform(async () => {
     const saved = await PromptService.SaveCollection(collection)
     collections.value = await PromptService.ListCollections() ?? []
-    collectionSeed.value = ''
+    if (saved.promptIds?.includes(collectionSeed.value)) collectionSeed.value = ''
     collectionId.value = saved.id
     notify(t('合集已保存'))
   })
@@ -445,20 +605,37 @@ function deleteCollection(id: string) {
   })
 }
 
+function copyCollection(text: string) {
+  void perform(async () => {
+    await PromptService.CopyText(text)
+    notify(t('已复制到剪贴板'))
+  })
+}
+
+function exportCollection(ids: string[]) {
+  void perform(async () => {
+    if (await PromptService.ExportSelected(ids)) notify(t('合集成员已导出'))
+  })
+}
+
 function openCollectionPrompt(item: Prompt) {
   collectionsOpen.value = false
   switchLibrary(item.kind as Kind, item.id)
 }
 
 function showHome() {
-  navigate(() => { homeOpen.value = true; collectionsOpen.value = false })
+  navigate(() => { homeOpen.value = true; collectionsOpen.value = false; authorPage.value = undefined; authorsOpen.value = false })
 }
 
 function setLayout(next: string | number | boolean) {
   if (!isLayout(next)) return
+  if (authorPage.value) {
+    authorLayout.value = next
+    return
+  }
   void perform(async () => {
     await PromptService.SetLayout(next)
-    layout.value = next
+    libraryLayout.value = next
   })
 }
 
@@ -543,7 +720,7 @@ function filter(nextCategory = '', nextFavorites = false) {
     category.value = nextCategory
     favoritesOnly.value = nextFavorites
     tagFilter.value = null
-    selectedId.value = results.value[0]?.id ?? ''
+    selectedId.value = displayedResults.value[0]?.id ?? ''
     resetVariables()
   })
 }
@@ -620,8 +797,13 @@ function save() {
     } finally {
       if (uploadIds.length) await PromptService.DiscardImageUploads(uploadIds).catch(() => {})
     }
-    await reload()
-    if (!results.value.some((item) => item.id === saved.id)) {
+    const previous = prompts.value.find(item => item.id === saved.id)
+    replacePrompts([saved], item => item.id === saved.id)
+    const previousMedia = new Set([...(previous?.images ?? []), ...(previous?.referenceImages ?? []), ...(previous?.videos ?? [])])
+    const addedMedia = [...(saved.images ?? []), ...(saved.referenceImages ?? []), ...(saved.videos ?? [])]
+      .some(name => !previousMedia.has(name))
+    invalidateStats(addedMedia)
+    if (!authorPage.value && !results.value.some((item) => item.id === saved.id)) {
       category.value = ''
       favoritesOnly.value = false
       searchText.value = ''
@@ -634,6 +816,7 @@ function save() {
     selectedId.value = saved.id
     resetVariables()
     notify(t('已保存提示词'))
+    if (saved.author && !authorsByName.value.has(saved.author)) authors.value = await PromptService.ListAuthors() ?? []
   })
 }
 
@@ -648,10 +831,6 @@ function chooseVideos() {
 
 function removeDraftVideo(index: number) {
   if (draft.value?.videos) draft.value.videos.splice(index, 1)
-}
-
-function videoAsset(number: number, name: string) {
-  return '/prompt-videos/' + number + '/' + encodeURIComponent(name)
 }
 
 async function loadVideoDetails(number: number, names: string[]) {
@@ -684,7 +863,7 @@ function moveVideo(offset: number) {
 }
 
 function selectCard(event: MouseEvent, item: Prompt) {
-  if (!batchMode.value && (event.target as Element).closest('[data-video-cover]')) {
+  if (!authorPage.value && !batchMode.value && (event.target as Element).closest('[data-video-cover]')) {
     openVideo(item, 0)
     return
   }
@@ -694,8 +873,9 @@ function selectCard(event: MouseEvent, item: Prompt) {
 function toggleFavorite(item: Prompt) {
   void perform(async () => {
     await PromptService.SetFavorite(item.id, !item.favorite)
-    await reload()
-    if (!selected.value) selectedId.value = results.value[0]?.id ?? ''
+    replacePrompts([{ ...item, favorite: !item.favorite }], entry => entry.id === item.id)
+    invalidateStats()
+    if (!selected.value) selectedId.value = displayedResults.value[0]?.id ?? ''
     notify(item.favorite ? t('已取消收藏') : t('已收藏'))
   })
 }
@@ -704,8 +884,10 @@ function remove(ids: string[]) {
   void perform(async () => {
     await PromptService.DeletePrompts(ids)
     batchIds.value = []
-    await reload()
-    selectedId.value = results.value[0]?.id ?? ''
+    const removed = new Set(ids)
+    replacePrompts([], item => removed.has(item.id))
+    invalidateStats()
+    selectedId.value = displayedResults.value[0]?.id ?? ''
     resetVariables()
     notify(t('已删除 {0} 条，24 小时内可从回收站恢复', ids.length))
   })
@@ -722,7 +904,11 @@ function restoreTrash(refs: TrashEntry['ref'][]) {
   void perform(async () => {
     const restored = await PromptService.RestoreTrash(refs)
     trashEntries.value = await PromptService.ListTrash() ?? []
-    await reload()
+    if (restored) {
+      await refreshPrompts(refs.map(ref => ref.id))
+      authors.value = await PromptService.ListAuthors() ?? []
+      invalidateStats()
+    }
     const skipped = refs.length - restored
     notify(skipped ? t('已恢复 {0} 条，跳过 {1} 条已过期或已恢复的提示词', restored, skipped) : t('已恢复 {0} 条提示词', restored))
   })
@@ -732,7 +918,7 @@ function purgeTrash(refs: TrashEntry['ref'][]) {
   void perform(async () => {
     const result = await PromptService.DeleteTrashPermanently(refs)
     trashEntries.value = await PromptService.ListTrash() ?? []
-    await reload()
+    invalidateStats(true)
     const skipped = refs.length - result.deleted
     const outcome = t('已彻底删除 {0} 条{1}', result.deleted, skipped ? t('，跳过 {0} 条已移出回收站的提示词', skipped) : '')
     notify(result.cleanupPending ? outcome + t('，部分附件未能清理') : outcome, result.cleanupPending ? 'error' : 'success')
@@ -773,13 +959,6 @@ function capturePreviewPixels(event: Event) {
   previewPixels.value = { width: image.naturalWidth, height: image.naturalHeight }
 }
 
-function sizeWaterfallCover(event: Event) {
-  const image = event.currentTarget as HTMLImageElement
-  if (image.naturalWidth && image.naturalHeight) {
-    image.parentElement?.style.setProperty('aspect-ratio', image.naturalWidth + ' / ' + image.naturalHeight)
-  }
-}
-
 function openPromptPreview(number: number, names: string[], index: number) {
   openPreview(names.map(name => ({ name, number, url: imageURL(number + '/' + name) })), index)
 }
@@ -808,9 +987,12 @@ function hasMedia(kind: string) {
 
 function batchFavorite(favorite: boolean) {
   void perform(async () => {
-    await PromptService.BatchFavorite(visibleBatchIds.value, favorite)
+    const ids = visibleBatchIds.value
+    const changed = new Set(ids)
+    await PromptService.BatchFavorite(ids, favorite)
+    replacePrompts(prompts.value.filter(item => changed.has(item.id)).map(item => ({ ...item, favorite })), item => changed.has(item.id))
     batchIds.value = []
-    await reload()
+    invalidateStats()
     notify(favorite ? t('选中条目已收藏') : t('选中条目已取消收藏'))
   })
 }
@@ -818,10 +1000,12 @@ function batchFavorite(favorite: boolean) {
 function applyBatchCategory() {
   if (batchCategory.value === null) return
   void perform(async () => {
-    await PromptService.BatchCategory(visibleBatchIds.value, kind.value, batchCategory.value ?? '')
+    const ids = visibleBatchIds.value
+    await PromptService.BatchCategory(ids, kind.value, batchCategory.value ?? '')
     batchIds.value = []
     batchCategory.value = null
-    await reload()
+    await refreshPrompts(ids)
+    invalidateStats()
     notify(t('选中条目的分类已更新'))
   })
 }
@@ -842,7 +1026,7 @@ function confirmCleanup(names: string[]) {
   void perform(async () => {
     const result = await PromptService.CleanUnreferencedImages(names)
     cleanupFiles.value = undefined
-    await reload()
+    invalidateStats(true)
     const skipped = result.skipped ?? []
     notify(t('已清理 {0} 张，释放 {1}{2}', result.removed, formatBytes(result.bytes), skipped.length ? t('，跳过 {0} 张', skipped.length) : ''))
   })
@@ -855,7 +1039,7 @@ async function reloadPreferences() {
     Promise.all(fieldKeys.map(async key => [key, await PromptService.ViewFields(key)] as const)),
   ])
   viewFields.value = Object.fromEntries(savedFields.filter(([, fields]) => fields?.length))
-  layout.value = isLayout(savedLayout) ? savedLayout : 'cards'
+  libraryLayout.value = isLayout(savedLayout) ? savedLayout : 'cards'
   if (saved === 'dark' || saved === 'light' || saved === 'system') theme.value = saved
   await Promise.all([
     reloadModels('art'), reloadModels('video'),
@@ -885,7 +1069,8 @@ function updateCategory(current: string, deleting = false) {
     else await PromptService.RenameCategory(targetKind, current, next)
     if (kind.value === targetKind && category.value === current) category.value = deleting ? '' : next
     editingCategory.value = ''
-    await Promise.all([reloadCategories(targetKind), reload()])
+    await Promise.all([reloadCategories(targetKind), refreshKind(targetKind)])
+    invalidateStats()
     notify(deleting ? t('已删除分类，原条目保留为未分类') : t('分类已更新'))
   })
 }
@@ -910,7 +1095,8 @@ function renameTag() {
     await PromptService.RenameTag(targetKind, current, name)
     if (kind.value === targetKind && tagFilter.value === current) tagFilter.value = name
     editingTag.value = ''
-    await reload()
+    await refreshKind(targetKind)
+    invalidateStats()
     notify(t('标签已更新，同名标签已合并'))
   })
 }
@@ -965,7 +1151,8 @@ function copyText(text: string) {
 
 const { pendingImport, restoreOpen, chooseImport, closeImport, confirmImport } = useBackupImport(busy, perform, async (result, replace) => {
   await reload()
-  if (!selected.value) selectedId.value = results.value[0]?.id ?? ''
+  invalidateStats(true)
+  if (!selected.value) selectedId.value = displayedResults.value[0]?.id ?? ''
   if (replace) {
     draft.value = null
     clearDraftImages()
@@ -1044,29 +1231,53 @@ function openGitHub() {
 
 <template>
   <NConfigProvider :locale="language === 'en-US' ? enUS : zhCN" :date-locale="language === 'en-US' ? dateEnUS : dateZhCN" :theme="isDark ? darkTheme : null" :theme-overrides="themeOverrides">
-    <main class="workspace" :class="{ 'is-dark': isDark, 'card-layout': layout !== 'list' || collectionsOpen, 'no-detail': !selected }">
-      <header class="app-header">
-        <div class="brand"><img class="brand-icon" src="/icons/prompt-next.svg" alt=""><div><strong>Prompt Next</strong><small>{{ t('本地创作工作台') }}</small></div></div>
-        <div class="actions">
-          <NButton size="small" secondary :disabled="busy" @click="chooseImport">{{ t('导入 JSON') }}</NButton>
-          <NButton size="small" secondary :disabled="busy" @click="exportBackup">{{ t('备份') }}</NButton>
-          <NButton size="small" secondary @click="settingsOpen = true"><template #icon><AppIcon name="settings" /></template>{{ t('设置') }}</NButton>
+    <main class="workspace" :style="workspaceTheme" :class="{ 'is-dark': isDark, 'card-layout': layout !== 'list' || collectionsOpen, 'no-detail': !selected, 'author-workspace': !!authorPage }">
+      <header class="app-header" :class="{ 'windows-title-bar': isWindows, 'mac-title-bar': isMac }">
+        <div v-if="isWindows || isMac" class="brand title-drag-area" @dblclick="isWindows && runWindowAction(Window.ToggleMaximise())">
+          <img class="brand-icon" src="/icons/prompt-next.svg" alt="" draggable="false">
+          <strong>Prompt Next</strong>
+        </div>
+        <div class="header-tools">
+          <NButton size="small" quaternary :title="t('导入 JSON')" :aria-label="t('导入 JSON')" :disabled="busy" @click="chooseImport">
+            <template #icon><AppIcon name="import" /></template>
+          </NButton>
+          <NButton size="small" quaternary :title="t('备份')" :aria-label="t('备份')" :disabled="busy" @click="exportBackup">
+            <template #icon><AppIcon name="backup" /></template>
+          </NButton>
+          <NButton size="small" quaternary :title="t('设置')" :aria-label="t('设置')" @click="settingsOpen = true">
+            <template #icon><AppIcon name="settings" /></template>
+          </NButton>
+        </div>
+        <div v-if="isWindows" class="window-controls">
+          <button type="button" :title="t('最小化窗口')" :aria-label="t('最小化窗口')" @click="runWindowAction(Window.Minimise())">
+            <AppIcon name="window-minimise" />
+          </button>
+          <button type="button" :title="maximiseLabel" :aria-label="maximiseLabel" @click="runWindowAction(Window.ToggleMaximise())">
+            <AppIcon :name="windowMaximised ? 'window-restore' : 'window-maximise'" />
+          </button>
+          <button type="button" class="window-close" :title="t('关闭窗口')" :aria-label="t('关闭窗口')" @click="runWindowAction(Window.Close())">
+            <AppIcon name="window-close" />
+          </button>
         </div>
       </header>
 
       <aside class="sidebar" :aria-label="t('提示词库导航')">
         <div class="section-label">{{ t('工作区') }}</div>
-        <button class="library-button" :class="{ active: homeOpen && !collectionsOpen }" :aria-pressed="homeOpen && !collectionsOpen" @click="showHome">
-          <span class="library-icon"><AppIcon name="home" /></span>{{ t('工作台首页') }}
+        <button class="library-button" :title="t('工作台首页')" :aria-label="t('工作台首页')" :class="{ active: homeOpen && !collectionsOpen }" :aria-pressed="homeOpen && !collectionsOpen" @click="showHome">
+          <span class="library-icon"><AppIcon name="home" /></span><span class="nav-label">{{ t('工作台首页') }}</span><span class="nav-short">{{ t('首页') }}</span>
         </button>
-        <button v-for="item in libraries" :key="item.kind" class="library-button" :class="{ active: !homeOpen && !collectionsOpen && kind === item.kind }" :aria-pressed="!homeOpen && !collectionsOpen && kind === item.kind" @click="switchLibrary(item.kind)">
+        <button v-for="item in libraries" :key="item.kind" class="library-button" :title="t(item.label)" :aria-label="t(item.label)" :class="{ active: !homeOpen && !collectionsOpen && !authorsOpen && !authorPage && kind === item.kind }" :aria-pressed="!homeOpen && !collectionsOpen && !authorsOpen && !authorPage && kind === item.kind" @click="switchLibrary(item.kind)">
           <span class="library-icon" :class="item.kind"><AppIcon :name="item.icon" /></span>
-          <span>{{ t(item.label) }}</span>
+          <span class="nav-label">{{ t(item.label) }}</span><span class="nav-short">{{ t(item.shortLabel) }}</span>
         </button>
-        <button class="library-button" :class="{ active: collectionsOpen }" type="button" :aria-pressed="collectionsOpen" @click="openCollections()">
-          <span class="library-icon"><AppIcon name="folder" /></span><span>{{ t('提示词合集') }}</span>
+        <button class="library-button" :title="t('提示词合集')" :aria-label="t('提示词合集')" :class="{ active: collectionsOpen }" type="button" :aria-pressed="collectionsOpen" @click="openCollections()">
+          <span class="library-icon"><AppIcon name="folder" /></span><span class="nav-label">{{ t('提示词合集') }}</span><span class="nav-short">{{ t('合集') }}</span>
         </button>
-        <template v-if="!homeOpen && !collectionsOpen">
+        <button class="library-button" type="button" :title="t('所有作者')" :aria-label="t('所有作者')" :class="{ active: !collectionsOpen && (authorsOpen || authorPage) }"
+          :aria-pressed="!collectionsOpen && (authorsOpen || !!authorPage)" @click="showAuthors">
+          <span class="library-icon"><AppIcon name="persona" /></span><span class="nav-label">{{ t('所有作者') }}</span><span class="nav-short">{{ t('作者') }}</span>
+        </button>
+        <template v-if="!homeOpen && !collectionsOpen && !authorsOpen && !authorPage">
           <section class="sidebar-group" :aria-label="t('当前库')">
             <h2 class="section-label">{{ t('当前库') }}</h2>
             <button class="filter-button" :class="{ active: !category && !favoritesOnly && !tagFilter }" @click="filter()">{{ t('全部') }}<span>{{ libraryItems.length }}</span></button>
@@ -1086,68 +1297,62 @@ function openGitHub() {
         </template>
       </aside>
 
-      <section v-if="homeOpen && !collectionsOpen" class="home-pane" :aria-label="t('工作台首页')">
-        <div class="hero">
-          <div><p>{{ t('本地创作工作台') }}</p><h1>Prompt Next</h1><p>{{ t('整理文本提示词、绘画参考图和角色设定。') }}</p>
-            <div class="actions"><NButton type="primary" @click="switchLibrary('text')">{{ t('进入文本库') }}</NButton><NButton @click="switchLibrary('art')">{{ t('进入绘画库') }}</NButton><NButton @click="switchLibrary('art'); startEdit()">{{ t('新建绘画提示词') }}</NButton></div>
-          </div>
-          <img class="hero-logo" src="/icons/prompt-next.svg" alt="Prompt Next Logo">
-        </div>
-        <div class="overview">
-          <button v-for="item in libraries" :key="item.kind" class="stat-card" @click="switchLibrary(item.kind)">
-            <span class="library-icon" :class="item.kind"><AppIcon :name="item.icon" /></span>
-            <span>{{ t(item.label) }}</span><strong>{{ prompts.filter(p => p.kind === item.kind).length }} {{ t('条') }}</strong>
-          </button>
-          <div class="stat-card"><span class="library-icon"><AppIcon name="disk" /></span>
-            <span>{{ t('数据库占用') }}</span><strong>{{ formatBytes(stats?.dbBytes) }}</strong>
-          </div>
-          <div class="stat-card"><span class="library-icon art"><AppIcon name="art" /></span>
-            <span>{{ t('图片占用 ·') }} {{ stats?.imageFiles ?? 0 }} {{ t('张') }}</span><strong>{{ formatBytes(stats?.imageBytes) }}</strong>
-          </div>
-          <div v-if="stats?.videoFiles" class="stat-card"><span class="library-icon"><AppIcon name="video" /></span>
-            <span>{{ t('视频占用 ·') }} {{ stats.videoFiles }} {{ t('个') }}</span><strong>{{ formatBytes(stats.videoBytes) }}</strong>
-          </div>
-        </div>
-        <div class="dashboard-charts">
-          <PromptTrend :days="stats?.recentPrompts ?? []" />
-          <DistributionChart :title="t('绘画分类')" :subtitle="t('按绘画条目统计')" :items="categoryDistribution" />
-          <DistributionChart :title="t('AI 模型')" :subtitle="t('多选模型分别计数')" :items="modelDistribution" />
-        </div>
-        <div class="home-section">
-          <h2>{{ t('最近更新') }}</h2>
-          <p v-if="!recent.length" class="section-label">{{ t('还没有提示词') }}</p>
-          <button v-for="item in recent" :key="item.id" class="recent-row" @click="switchLibrary(item.kind as Kind, item.id)">
-            <span>{{ item.title }}</span><small>{{ libraryLabel(item.kind) }} · {{ formatDate(item.updatedAt) }}</small>
-          </button>
-        </div>
-        <div v-if="stats" class="data-path"><strong>{{ t('本地共占用') }} {{ formatBytes(stats.dbBytes + stats.imageBytes + stats.videoBytes) }}</strong><code>{{ stats.directory }}</code></div>
-      </section>
+      <WorkspaceHome v-if="homeOpen && !collectionsOpen" :prompts="prompts" :stats="stats"
+        :format-date="formatDate" :format-bytes="formatBytes" @open="switchLibrary"
+        @new-artwork="switchLibrary('art'); startEdit()" />
 
-      <section v-if="!homeOpen && !collectionsOpen" class="list-pane" :aria-label="t('提示词列表')">
+      <AuthorDirectory v-if="(authorsOpen || authorPage?.fromDirectory) && !collectionsOpen" v-show="authorsOpen"
+        ref="authorDirectory" :authors="authors" :prompts="prompts" :prompts-by-author="promptsByAuthor" :busy="busy"
+        :format-date="formatDate" @open="openAuthor" @edit="editAuthor" />
+      <section v-if="!homeOpen && !collectionsOpen && !authorsOpen" ref="listPane" class="list-pane" :class="{ 'waterfall-pane': layout === 'waterfall', 'virtual-pane': layout === 'list' }" :aria-label="t(authorPage ? '作者主页' : '提示词列表')">
         <div class="pane-heading">
-          <p class="section-label">{{ t(library.description) }}</p>
-          <div class="list-heading"><h1>{{ t(library.label) }}</h1><NButton type="primary" size="small" :disabled="busy || loading" @click="startEdit()">{{ t('＋ 新建') }}</NButton></div>
+          <template v-if="authorPage">
+            <div class="author-topline">
+              <NButton size="small" @click="closeAuthor">‹ {{ t('返回') }}</NButton>
+              <span class="section-label">{{ t('作者主页') }}</span>
+            </div>
+            <div class="author-profile">
+              <span class="author-avatar" aria-hidden="true">{{ Array.from(authorName)[0]?.toUpperCase() }}</span>
+              <div class="author-profile-copy">
+                <h1>{{ authorName }}</h1>
+                <p>{{ t('本地收录 {0} 条提示词', authorPrompts.length) }}</p>
+              </div>
+              <NButton v-if="activeAuthor" size="small" :disabled="busy" @click="editAuthor(activeAuthor)">{{ t('编辑作者') }}</NButton>
+              <p v-if="activeAuthor?.bio" class="author-bio">{{ activeAuthor.bio }}</p>
+            </div>
+            <div class="author-filters" :aria-label="t('按提示词库筛选')">
+              <NButton size="small" :type="authorKind === '' ? 'primary' : 'default'" :aria-pressed="authorKind === ''" @click="filterAuthor('')">{{ t('全部') }} {{ authorPrompts.length }}</NButton>
+              <NButton v-for="item in libraries" :key="item.kind" size="small" :type="authorKind === item.kind ? 'primary' : 'default'"
+                :aria-pressed="authorKind === item.kind" @click="filterAuthor(item.kind)">{{ t(item.label) }} {{ authorCounts[item.kind] }}</NButton>
+            </div>
+          </template>
+          <template v-else>
+            <p class="section-label">{{ t(library.description) }}</p>
+            <div class="list-heading"><h1>{{ t(library.label) }}</h1><NButton type="primary" size="small" :disabled="busy || loading" @click="startEdit()">{{ t('＋ 新建') }}</NButton></div>
+          </template>
           <form class="search-toolbar" @submit.prevent="submitSearch">
-            <NInput ref="searchInput" class="search-keyword" :value="searchText" clearable :disabled="!!draft"
+            <NInput ref="searchInput" class="search-keyword" :value="authorPage ? authorSearchText : searchText" clearable :disabled="!!draft"
               :placeholder="t('搜索标题、正文、编号…')" :aria-label="t('搜索提示词')" @update:value="updateSearchText">
               <template #prefix><AppIcon name="search" class="search-icon" /></template>
             </NInput>
-            <NSelect class="search-filter search-category" :consistent-menu-width="false" :value="category || null" :options="categoryOptions" clearable filterable :placeholder="t('分类')" :aria-label="t('按分类筛选')" @update:value="value => category = value ?? ''" />
-            <NSelect class="search-filter search-sort" v-model:value="sort" :options="sortOptions" :aria-label="t('排序')" />
-            <NSelect class="search-filter search-tag" :consistent-menu-width="false" v-model:value="tagFilter" :options="tagOptions" clearable filterable :placeholder="t('标签')" :aria-label="t('按标签筛选')" />
-            <NSelect v-if="hasMedia(kind)" class="search-filter search-model" :consistent-menu-width="false" v-model:value="modelFilter" :options="modelOptions" clearable filterable :placeholder="t('模型')" :aria-label="t('按模型筛选')" />
+            <NSelect v-if="!authorPage" class="search-filter search-category" :consistent-menu-width="false" :value="category || null" :options="categoryOptions" clearable filterable :placeholder="t('分类')" :aria-label="t('按分类筛选')" @update:value="value => category = value ?? ''" />
+            <NSelect class="search-filter search-sort" :value="authorPage ? authorSort : sort" :options="sortOptions" @update:value="value => authorPage ? authorSort = value : sort = value" :aria-label="t('排序')" />
+            <NSelect v-if="!authorPage" class="search-filter search-tag" :consistent-menu-width="false" v-model:value="tagFilter" :options="tagOptions" clearable filterable :placeholder="t('标签')" :aria-label="t('按标签筛选')" />
+            <NSelect v-if="!authorPage && hasMedia(kind)" class="search-filter search-model" :consistent-menu-width="false" v-model:value="modelFilter" :options="modelOptions" clearable filterable :placeholder="t('模型')" :aria-label="t('按模型筛选')" />
             <div class="search-actions">
-              <NButton type="primary" attr-type="submit" :disabled="!!draft"><template #icon><AppIcon name="search" /></template>{{ t('搜索') }}</NButton>
+              <NButton v-if="!authorPage" type="primary" attr-type="submit" :disabled="!!draft"><template #icon><AppIcon name="search" /></template>{{ t('搜索') }}</NButton>
               <NButton @click="resetSearch">{{ t('重置') }}</NButton>
             </div>
           </form>
           <div class="list-controls">
-            <div class="result-count">{{ tagFilter || category || (favoritesOnly ? t('收藏') : t('全部')) }} · {{ results.length }} {{ t('条') }}</div>
-            <NButton size="small" :disabled="busy || !!draft" @click="batchMode = !batchMode; batchIds = []">{{ batchMode ? t('结束多选') : t('多选') }}</NButton>
+            <div class="result-count">{{ authorPage ? t('筛选结果') : (tagFilter || category || (favoritesOnly ? t('收藏') : t('全部'))) }} · {{ displayedResults.length }} {{ t('条') }}</div>
+            <NButton v-if="!authorPage" size="small" class="narrow-favorite" :aria-pressed="favoritesOnly"
+              :type="favoritesOnly ? 'primary' : 'default'" @click="filter('', !favoritesOnly)">{{ t('收藏') }}</NButton>
+            <NButton v-if="!authorPage" size="small" :disabled="busy || !!draft" @click="batchMode = !batchMode; batchIds = []">{{ batchMode ? t('结束多选') : t('多选') }}</NButton>
             <NRadioGroup size="small" :value="layout" @update:value="setLayout">
               <NRadioButton v-for="option in layoutOptions" :key="option.value" :value="option.value"><AppIcon class="ui-icon" :name="option.icon" />{{ t(option.label) }}</NRadioButton>
             </NRadioGroup>
-            <NPopover trigger="click" placement="bottom-end">
+            <NPopover v-if="!authorPage" trigger="click" placement="bottom-end">
               <template #trigger><NButton size="small" :disabled="busy">{{ t('展示字段') }}</NButton></template>
               <div class="view-fields-picker">
                 <strong>{{ layoutLabel }}{{ t('展示字段') }}</strong>
@@ -1161,7 +1366,7 @@ function openGitHub() {
             </NPopover>
           </div>
         </div>
-        <div v-if="batchMode" class="actions batch-actions">
+        <div v-if="batchMode && !authorPage" class="actions batch-actions">
           <NButton size="small" :disabled="busy || !results.length" @click="batchIds = visibleBatchIds.length === results.length ? [] : results.map(item => item.id)">{{ visibleBatchIds.length === results.length ? t('取消全选') : t('全选当前结果') }}</NButton>
           <span>{{ t('已选') }} {{ visibleBatchIds.length }} {{ t('条') }}</span>
           <NButton size="small" :disabled="busy || !visibleBatchIds.length" @click="batchFavorite(true)">{{ t('收藏') }}</NButton>
@@ -1174,73 +1379,44 @@ function openGitHub() {
             {{ t('确定删除这 {0} 条提示词？', visibleBatchIds.length) }}
           </NPopconfirm>
         </div>
-        <div v-if="loading" class="empty list-empty">{{ t('正在加载提示词…') }}</div>
-        <div v-else-if="!results.length" class="empty list-empty">{{ query ? t('没有匹配的提示词') : t('这里还没有提示词') }}</div>
-        <NCheckboxGroup v-model:value="batchIds" :class="{ gallery: layout === 'cards', waterfall: layout === 'waterfall', 'written-gallery': writtenLibrary }">
-        <div v-for="item in results" :key="item.id" class="prompt-entry">
-        <NCheckbox v-if="batchMode" :value="item.id" class="batch-check" :aria-label="t('选中 ') + item.title" />
-        <button class="prompt-row" :class="{ active: item.id === selectedId, 'waterfall-photo': !writtenLibrary && layout === 'waterfall' && !!(item.videos?.length || item.images?.length), 'written-preview': writtenLibrary }" :aria-pressed="item.id === selectedId" :aria-label="item.title" @click="selectCard($event, item)">
-          <span v-if="!writtenLibrary && layout === 'waterfall' && (item.videos?.length || item.images?.length)" class="waterfall-cover" :class="{ 'waterfall-video': item.videos?.length }" :data-video-cover="item.videos?.length ? '' : undefined">
-            <VideoCover v-if="item.videos?.length" :key="item.videos[0]" :src="videoAsset(item.number, item.videos[0]!)" natural-ratio />
-            <img v-else-if="item.images?.length" :src="imageURL(item.number + '/' + item.images[0]!, true)" alt="" loading="lazy" @load="sizeWaterfallCover">
-            <span v-if="visibleFields.has('category') && item.category" class="waterfall-category">{{ item.category }}</span>
-            <span v-if="item.favorite" class="waterfall-favorite" :aria-label="t('已收藏')">★</span>
-          </span>
-          <span v-else-if="layout === 'cards' && !writtenLibrary" class="card-cover" :class="item.kind" :data-video-cover="item.videos?.length ? '' : undefined">
-            <VideoCover v-if="item.videos?.length" :key="item.videos[0]" :src="videoAsset(item.number, item.videos[0]!)" />
-            <img class="cover-photo" v-else-if="item.images?.length" :src="imageURL(item.number + '/' + item.images[0]!, true)" alt="" loading="lazy">
-            <AppIcon v-else-if="item.kind === 'video'" name="video" />
-            <img v-else class="cover-avatar" :src="'/icons/' + item.kind + '-avatar.svg'" alt="" loading="lazy">
-            <span v-if="item.images?.length && visibleFields.has('models') && promptModels(item).length"
-              class="cover-model">{{ promptModels(item).join(' · ') }}</span>
-            <span v-if="item.videos?.length" class="video-count">{{ item.videos.length }} {{ t('段') }}</span>
-            <span v-else-if="item.images?.length" class="image-count">{{ item.images.length }} {{ t('张') }}</span>
-          </span>
-          <span class="row-content">
-            <span v-if="writtenLibrary && layout !== 'list'" class="written-heading">
-              <span class="written-icon"><AppIcon :name="item.kind === 'persona' ? 'fish' : 'text'" /></span>
-              <span v-if="visibleFields.has('category') && (item.category || item.kind === 'persona')" class="written-category" :title="item.category">{{ item.category || t('未分类') }}</span>
-              <span v-if="visibleFields.has('characters')" class="written-length">{{ t('{0} 字', promptCharacterCount(item.body)) }}</span>
-            </span>
-            <span v-if="visibleFields.has('title')" class="row-title" :title="item.title">{{ item.title }} <span v-if="item.favorite && (writtenLibrary || layout !== 'waterfall' || !(item.videos?.length || item.images?.length))" class="star">★</span></span>
-            <span v-if="visibleFields.has('body') && (item.body || item.english)" class="row-summary">{{ item.body || item.english }}</span>
-            <span v-if="visibleFields.has('description') && (item.description || item.kind === 'persona')" class="row-summary" :class="{ 'persona-summary': item.kind === 'persona' }">{{ item.description?.trim() || (item.kind === 'persona' ? item.body : '') }}</span>
-            <span v-if="visibleFields.has('models') && promptModels(item).length" class="row-category" :title="promptModels(item).join(' · ')">{{ promptModels(item).join(' · ') }}</span>
-            <span v-if="visibleFields.has('category') && (item.category || item.kind === 'persona') && (layout === 'list' || !writtenLibrary) && (layout !== 'waterfall' || !(item.videos?.length || item.images?.length))" class="row-category">{{ item.category || t('未分类') }}</span>
-            <span v-if="layout === 'list' && visibleFields.has('characters')" class="row-category">{{ t('{0} 字', promptCharacterCount(item.body)) }}</span>
-            <span v-if="visibleFields.has('tags') && item.tags?.length" class="row-category">{{ item.tags.join(' · ') }}</span>
-            <span v-if="visibleFields.has('number') || visibleFields.has('created') || visibleFields.has('updated')" class="row-meta">
-              <span v-if="visibleFields.has('number')" class="row-number">{{ formatPromptNumber(item.number) }}</span>
-              <span v-if="visibleFields.has('created') || visibleFields.has('updated')" class="row-times">
-                <span v-if="visibleFields.has('created')">{{ t('创建') }} {{ formatDate(item.createdAt) }}</span>
-                <span v-if="visibleFields.has('updated')">{{ t('更新') }} {{ formatDate(item.updatedAt) }}</span>
-              </span>
-            </span>
-          </span>
-        </button>
+        <div v-if="loading" class="gallery browse-skeleton" role="status" :aria-label="t('正在加载提示词…')">
+          <span v-for="index in 6" :key="index" aria-hidden="true" />
         </div>
-        </NCheckboxGroup>
+        <div v-else-if="!displayedResults.length" class="empty list-empty">{{ activeQuery ? t('没有匹配的提示词') : t('这里还没有提示词') }}</div>
+        <PromptResults v-else ref="promptResults" v-model:checked="batchIds" v-model:page="browsePage"
+          :items="displayedResults" :layout="layout" :written-library="writtenLibrary">
+          <template #default="{ item, ratio }">
+            <PromptRow :item="item" :layout="layout" :cover-ratio="ratio" :visible-fields="visibleFields" :selected-id="selectedId"
+              :batch-mode="batchMode && !authorPage" :author-view="!!authorPage" :show-library="!!authorPage && !authorKind"
+              :author-display-name="authorDisplayName" :library-label="libraryLabel" :video-asset="videoAsset" :format-date="formatDate"
+              @select="selectCard" @author="openAuthor" />
+          </template>
+        </PromptResults>
       </section>
 
-      <section v-if="!homeOpen && !collectionsOpen && (selected || layout === 'list')" class="detail-pane" :class="{ 'detail-open': !!selected }" :aria-label="t('提示词详情')">
+      <button v-if="selected && !homeOpen && !collectionsOpen && !authorsOpen" type="button" class="detail-scrim" :aria-label="t('关闭')" @click="selectedId = ''" />
+      <section v-if="!homeOpen && !collectionsOpen && !authorsOpen && (selected || (!authorPage && layout === 'list'))" class="detail-pane" :class="{ 'detail-open': !!selected }" :aria-label="t('提示词详情')">
         <article v-if="selected" :key="selected.id" class="detail-article">
           <div class="detail-scroll">
             <header class="detail-card">
               <div class="detail-heading">
-                <p class="section-label detail-number">{{ t(library.label) }} · {{ formatPromptNumber(selected.number) }}</p>
+                <p class="section-label detail-number">{{ libraryLabel(selected.kind) }} · {{ formatPromptNumber(selected.number) }}</p>
                 <div class="actions">
-                  <NButton size="small" :disabled="busy" @click="toggleFavorite(selected)">{{ selected.favorite ? t('★ 已收藏') : t('☆ 收藏') }}</NButton>
+                  <NButton size="small" :disabled="busy" @click="toggleFavorite(selected)"><template #icon><AppIcon :name="selected.favorite ? 'star' : 'star-outline'" /></template>{{ selected.favorite ? t('已收藏') : t('收藏') }}</NButton>
                   <NButton size="small" :disabled="busy" @click="startEdit(selected)">{{ t('编辑') }}</NButton>
                   <NButton size="small" type="primary" :disabled="busy" @click="copyText(selected.body || selected.english)">{{ hasMedia(selected.kind) ? (selected.body ? t('复制中文') : t('复制英文')) : t('复制提示词') }}</NButton>
-                  <NButton v-if="layout !== 'list'" size="small" @click="selectedId = ''">{{ t('关闭') }}</NButton>
+                  <NButton class="detail-close" :class="{ 'narrow-only': !authorPage && layout === 'list' }" size="small" @click="selectedId = ''">{{ t('关闭') }}</NButton>
                 </div>
               </div>
               <h2 class="detail-title">{{ selected.title }}</h2>
               <div class="metadata">
                 <NTag v-if="selected.category" type="info" size="small">{{ selected.category }}</NTag>
                 <NTag v-for="tag in selected.tags" :key="tag" size="small">{{ tag }}</NTag>
-                <NButton v-if="selected.authorUrl" text size="tiny" @click="openWebLink(selected.authorUrl)">{{ t('原作者 ·') }} {{ selected.author || t('查看来源') }} ↗</NButton>
-                <span v-else-if="selected.author">{{ t('原作者 ·') }} {{ selected.author }}</span>
+                <span v-if="selected.author?.trim()" class="author-attribution">
+                  <span>{{ t('原作者 ·') }}</span>
+                  <NButton v-if="!authorPage" text type="primary" size="tiny" :title="t('查看作者主页')" @click="openAuthor(selected.author)">{{ authorDisplayName(selected.author) }}</NButton>
+                  <span v-else>{{ authorName }}</span>
+                </span>
                 <NTag v-for="model in promptModels(selected)" :key="'model:' + model" size="small" type="info">{{ model }}</NTag>
               </div>
               <div v-if="relatedCollections.length" class="actions detail-collections">
@@ -1248,6 +1424,7 @@ function openGitHub() {
                   @click="openCollections('', collection.id)">{{ collection.name }}</NButton>
               </div>
               <p class="entry-dates">{{ t('创建') }} {{ formatDate(selected.createdAt) }} {{ t('· 更新') }} {{ formatDate(selected.updatedAt) }}</p>
+              <PromptSource v-if="selected.authorUrl" :url="selected.authorUrl" @open="openWebLink" />
             </header>
             <section v-if="selected.description" class="detail-content-section">
               <h3 class="detail-section-heading"><AppIcon name="text" />{{ t('简介') }}</h3>
@@ -1333,8 +1510,21 @@ function openGitHub() {
       </section>
 
       <PromptCollections v-if="collectionsOpen" :key="collectionsPageKey" :selected-id="collectionId" :seed-id="collectionSeed"
-        :collections="collections" :prompts="prompts" :busy="busy" @close="collectionsOpen = false"
-        @select="id => collectionId = id" @save="saveCollection" @remove="deleteCollection" @open-prompt="openCollectionPrompt" />
+        :collections="collections" :prompts="prompts" :busy="busy" :format-date="formatDate" :author-display-name="authorDisplayName"
+        @select="id => collectionId = id" @save="saveCollection" @remove="deleteCollection" @open-prompt="openCollectionPrompt"
+        @copy="copyCollection" @export="exportCollection" />
+
+      <NModal :show="!!authorDraft" preset="card" :title="t('编辑作者')" class="app-modal" :mask-closable="!busy"
+        @update:show="show => { if (!show && !busy) authorDraft = undefined }">
+        <form v-if="authorDraft" class="editor" @submit.prevent="saveAuthor">
+          <label>{{ t('作者名称') }} <NInput v-model:value="authorDraft.name" :maxlength="200" /></label>
+          <label>{{ t('作者简介') }} <NInput v-model:value="authorDraft.bio" type="textarea" :maxlength="2000" /></label>
+          <div class="actions">
+            <NButton :disabled="busy" @click="authorDraft = undefined">{{ t('取消') }}</NButton>
+            <NButton type="primary" attr-type="submit" :disabled="busy || !authorDraft.name.trim()">{{ t('保存') }}</NButton>
+          </div>
+        </form>
+      </NModal>
 
       <footer class="status">
         <NButton size="tiny" text :disabled="busy" @click="openTrash"><template #icon><AppIcon name="trash" /></template>{{ t('回收站') }}</NButton>
@@ -1349,107 +1539,13 @@ function openGitHub() {
         :library-label="libraryLabel" @close="trashOpen = false" @restore="restoreTrash" @purge="purgeTrash" />
       <NAlert v-if="notice" class="notice" :type="notice.type" closable @close="notice = undefined">{{ notice.text }}</NAlert>
 
-      <NModal :show="!!draft && !discardOpen" preset="card" :title="draft?.id ? t('编辑提示词') : t('新建提示词')" class="editor-modal" :class="{ 'is-dark': isDark }" :mask-closable="false" :close-on-esc="!busy && !imagePreview && !videoPreview && !modelPickerOpen" :closable="!busy" @update:show="navigate(() => {})">
-        <form v-if="draft" id="prompt-editor-form" class="editor" @submit.prevent="save">
-          <section class="editor-group">
-            <h3>{{ t('基本信息') }}</h3>
-            <label><span>{{ t('提示词标题') }} <small class="editor-required">{{ t('必填') }}</small></span> <NInput v-model:value="draft.title" aria-required="true" :placeholder="t('输入标题')" /></label>
-            <div class="editor-meta-grid">
-              <label>{{ t('分类') }} <NSelect :value="draft.category || null" :options="categoryOptions" clearable filterable :placeholder="t('选择分类，可在设置中添加')" @update:value="value => draft && (draft.category = value ?? '')" /></label>
-              <label>{{ t('标签') }} <NInput v-model:value="tagsText" :placeholder="t('使用逗号分隔')" /></label>
-            </div>
-            <template v-if="hasMedia(draft.kind)">
-              <div class="editor-field">
-                <span id="model-field-label">{{ t('AI 模型') }}</span>
-                <NPopover v-model:show="modelPickerOpen" trigger="click" placement="bottom-start" :show-arrow="false" class="model-picker">
-                  <template #trigger>
-                    <button class="model-trigger" type="button" :aria-expanded="modelPickerOpen" aria-labelledby="model-field-label" :disabled="busy">
-                      <span v-if="!draft.models?.length" class="model-placeholder">{{ t('选择一个或多个模型') }}</span>
-                      <NTag v-for="model in draft.models" :key="model" size="small"><span class="model-name" :title="model">{{ model }}</span></NTag>
-                      <span class="model-chevron" aria-hidden="true">⌄</span>
-                    </button>
-                  </template>
-                  <NInput v-model:value="modelQuery" clearable size="small" :placeholder="t('查找模型')" :aria-label="t('查找模型')" />
-                  <NCheckboxGroup :value="draft.models ?? []" @update:value="names => draft && (draft.models = names.map(String))">
-                    <div class="model-option-grid">
-                      <NCheckbox v-for="name in editorModels" :key="name" :value="name"><span class="model-name" :title="name">{{ name }}</span></NCheckbox>
-                    </div>
-                  </NCheckboxGroup>
-                  <p v-if="!editorModels.length" class="model-placeholder">{{ t('没有匹配的模型') }}</p>
-                  <div class="actions model-picker-footer"><NButton size="small" type="primary" @click="modelPickerOpen = false">{{ t('完成') }}</NButton></div>
-                </NPopover>
-              </div>
-            </template>
-          </section>
-          <section v-if="draft.kind === 'video'" class="editor-group">
-            <div class="block-heading">
-              <h3>{{ t('效果视频') }} <small class="editor-required">{{ t('必填') }}</small></h3>
-              <NButton size="small" secondary :disabled="busy || (draft.videos?.length ?? 0) + draftVideoFiles.length >= 12" @click="chooseVideos">{{ t('添加视频') }}</NButton>
-            </div>
-            <p class="section-label">{{ t('可多选 MP4、WebM，最多 12 段。单段最大 64 MB，每次新增合计最大 192 MB，首段作为封面。') }}</p>
-            <div v-for="(name, index) in draft.videos" :key="name" class="draft-video-row">
-              <span>{{ t('视频') }} {{ index + 1 }} · {{ formatBytes(videoDetails.get(videoAsset(draftVideoSource, name))) }}</span>
-              <NButton size="tiny" quaternary type="error" :disabled="busy" @click="removeDraftVideo(index)">{{ t('移除') }}</NButton>
-            </div>
-            <div v-for="(file, index) in draftVideoFiles" :key="file.id" class="draft-video-row">
-              <span :title="file.name">{{ file.name }} · {{ formatBytes(file.bytes) }}</span>
-              <NButton size="tiny" quaternary type="error" :disabled="busy" @click="draftVideoFiles.splice(index, 1)">{{ t('移除') }}</NButton>
-            </div>
-          </section>
-          <EditorImageGroup v-if="draft.kind === 'art' || (draft.kind === 'video' && draftImages.length)"
-            :editor="effectImages" :title="t('效果图')" :required="draft.kind === 'art'" :cover="draft.kind === 'art'" :busy="busy"
-            :hint="t(draft.kind === 'art' ? '至少添加一张，首张效果图作为封面。可拖动排序。' : '可保留或移除已有的效果图。')"
-            @preview="openDraftPreview" />
-          <EditorImageGroup v-if="hasMedia(draft.kind)"
-            :editor="referenceImages" :title="t('参考图片')" :hint="t('用于记录生成前的原始图片。可添加多张并拖动排序。')"
-            :busy="busy" @preview="openDraftPreview" />
-          <p v-if="hasMedia(draft.kind)" class="editor-required">{{ t('中文与英文提示词至少填写一项') }}</p>
-          <PromptFold :title="hasMedia(draft.kind) ? t('中文提示词') : t(draft.kind === 'persona' ? '人设提示词（必填）' : '提示词正文（必填）')">
-            <NInput v-model:value="draft.body" type="textarea" :autosize="{ minRows: 4, maxRows: 10 }"
-              :aria-label="t('提示词正文')" :placeholder="t('可用双花括号标记变量，例如 {{角色名}}')" />
-          </PromptFold>
-          <PromptFold v-if="hasMedia(draft.kind)" :title="t('英文提示词')">
-            <NInput v-model:value="draft.english" type="textarea" :autosize="{ minRows: 4, maxRows: 10 }" :aria-label="t('英文提示词')" />
-          </PromptFold>
-          <PromptFold v-if="hasMedia(draft.kind)" :title="t('负向提示词')" :initially-open="!!draft.negative">
-            <NInput v-model:value="draft.negative" type="textarea" :aria-label="t('负向提示词')" />
-          </PromptFold>
-          <PromptFold :title="t('补充信息')" :initially-open="false">
-            <div class="editor-extra-fields">
-              <label>{{ t('说明') }} <NInput v-model:value="draft.description" type="textarea" :placeholder="t('输入补充说明（选填）')" /></label>
-              <label v-if="hasMedia(draft.kind)">{{ t('参数备注') }} <NInput v-model:value="draft.parameters" type="textarea" /></label>
-            </div>
-          </PromptFold>
-          <PromptFold :title="t('条目时间')" :initially-open="false">
-            <div class="editor-meta-grid">
-              <label>{{ t('创建时间') }}
-                <NDatePicker v-model:value="draftCreated" type="datetime" format="yyyy-MM-dd HH:mm:ss" clearable
-                  :placeholder="t(draft.id ? '沿用原创建时间' : '保存时自动记录')" />
-              </label>
-              <label>{{ t('更新时间') }}
-                <NDatePicker v-model:value="draftUpdated" type="datetime" format="yyyy-MM-dd HH:mm:ss" clearable
-                  :placeholder="t('保存时自动记录')" />
-              </label>
-            </div>
-            <p v-if="draft.updatedAt" class="entry-dates">{{ t('当前更新时间 · {0}', formatDate(draft.updatedAt)) }}</p>
-          </PromptFold>
-          <section class="editor-group">
-            <h3>{{ t('原作者信息') }}</h3>
-            <div class="editor-meta-grid">
-              <label>{{ t('原作者名称') }} <NInput v-model:value="draft.author" :placeholder="t('选填')" /></label>
-              <label>{{ t('原作者链接') }} <NInput v-model:value="draft.authorUrl" :placeholder="t('输入网页链接')" /></label>
-            </div>
-          </section>
-
-        </form>
-        <template #footer>
-          <div v-if="draft" class="actions editor-footer">
-            <NButton :disabled="busy" @click="navigate(() => {})">{{ t('取消') }}</NButton>
-            <NButton form="prompt-editor-form" attr-type="submit" type="primary" :loading="busy"
-              :disabled="!canSaveDraft">{{ t('保存') }}</NButton>
-          </div>
-        </template>
-      </NModal>
+      <PromptEditor :show="!discardOpen" :is-dark="isDark" :busy="busy" :media-preview-open="!!imagePreview || !!videoPreview"
+        :can-save-draft="canSaveDraft" :category-options="categoryOptions" :author-options="authorOptions" :editor-models="editorModels"
+        :draft-video-source="draftVideoSource" :video-details="videoDetails" :effect-images="effectImages" :reference-images="referenceImages"
+        :video-asset="videoAsset" :format-bytes="formatBytes" :format-date="formatDate"
+        v-model:draft="draft" v-model:tags-text="tagsText" v-model:created="draftCreated" v-model:updated="draftUpdated"
+        v-model:video-files="draftVideoFiles" v-model:model-picker-open="modelPickerOpen" v-model:model-query="modelQuery"
+        @close="navigate(() => {})" @save="save" @choose-videos="chooseVideos" @remove-video="removeDraftVideo" @preview="openDraftPreview" />
 
       <NModal :show="!!imagePreview" preset="card" :title="t('图片预览 · {0} / {1}', previewIndex + 1, previewImages.length)"
         class="image-modal" @update:show="previewImages = []">
@@ -1489,15 +1585,7 @@ function openGitHub() {
         </template>
       </NModal>
 
-      <NModal v-model:show="settingsOpen" preset="card" class="settings-modal" :auto-focus="false" @after-enter="settingsHeading?.focus()" :class="{ 'is-dark': isDark }" :bordered="false" :mask-closable="false">
-        <template #header><span ref="settingsHeading" class="settings-heading" tabindex="-1">{{ t('偏好设置') }}</span></template>
-        <div class="settings-layout">
-          <nav class="settings-nav" :aria-label="t('设置分类')">
-            <button v-for="section in settingsSections" :key="section.key" type="button" :aria-pressed="settingsSection === section.key" @click="settingsSection = section.key">
-              <AppIcon :name="section.icon" class="ui-icon" />{{ t(section.label) }}
-            </button>
-          </nav>
-          <section class="settings-content" :aria-label="t(settingsSections.find(section => section.key === settingsSection)?.label)">
+      <WorkspaceSettings v-model:show="settingsOpen" v-model:section="settingsSection" :is-dark="isDark" :is-mac="isMac">
             <template v-if="settingsSection === 'appearance'">
               <div class="setting-field">
                 <h3>{{ t('语言') }}</h3>
@@ -1627,7 +1715,7 @@ function openGitHub() {
               <div class="setting-field">
                 <h3>{{ t('应用数据目录') }}</h3>
                 <code class="settings-path">{{ stats?.directory || t('正在读取目录…') }}</code>
-                <p v-if="stats?.locationWarning" class="setting-hint">{{ stats.locationWarning }}</p>
+                <p v-if="stats?.locationWarning" class="setting-hint">{{ language === 'en-US' ? translateBackendError(stats.locationWarning) : stats.locationWarning }}</p>
                 <p class="setting-hint">{{ t('数据库') }} {{ formatBytes(stats?.dbBytes) }} {{ t('· 图片') }} {{ formatBytes(stats?.imageBytes) }} {{ t('· 视频') }} {{ formatBytes(stats?.videoBytes) }}</p>
                 <div class="actions">
                   <NButton size="small" :disabled="busy" @click="openDataFolder">{{ t('打开文件夹') }}</NButton>
@@ -1652,10 +1740,7 @@ function openGitHub() {
               </div>
               <div class="setting-field"><h3>GitHub</h3><NButton text type="primary" @click="openGitHub">github.com/Daneliya ↗</NButton></div>
             </template>
-          </section>
-        </div>
-        <template #footer><div class="settings-footer"><NButton type="primary" @click="settingsOpen = false">{{ t('完成') }}</NButton></div></template>
-      </NModal>
+      </WorkspaceSettings>
 
       <NModal :show="!!dataFolderChange" preset="card" :title="dataFolderChange === 'default' ? t('恢复默认数据目录') : t('更换数据目录')" class="app-modal"
         :mask-closable="!busy" :close-on-esc="!busy" :closable="!busy" @update:show="dataFolderChange = undefined">

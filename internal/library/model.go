@@ -46,7 +46,7 @@ func (p *Prompt) validate() error {
 	p.AuthorURL = strings.TrimSpace(p.AuthorURL)
 	p.VideoURL = strings.TrimSpace(p.VideoURL)
 	if p.AuthorURL != "" && !ValidWebLink(p.AuthorURL) {
-		return errors.New("原作者链接须为有效的 HTTP 或 HTTPS 网址")
+		return errors.New("提示词原链接须为有效的 HTTP 或 HTTPS 网址")
 	}
 	if p.VideoURL != "" && (p.Kind != "video" || !ValidWebLink(p.VideoURL)) {
 		return errors.New("参考视频链接须为有效的 HTTP 或 HTTPS 网址")

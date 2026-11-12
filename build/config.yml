@@ -7,11 +7,11 @@ version: '3'
 info:
   companyName: "Daneliya" # The name of the company
   productName: "Prompt Next" # The name of the application
-  productIdentifier: "com.daneliya.promptmanager" # The unique product identifier
+  productIdentifier: "com.daneliya.promptnext" # The unique product identifier
   description: "离线管理人设和 AI 绘画提示词" # The application description
   copyright: "(c) 2025, Daneliya" # Copyright text
   comments: "Prompt Next" # Comments
-  version: "0.2.7" # The application version
+  version: "0.2.8" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

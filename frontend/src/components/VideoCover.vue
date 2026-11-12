@@ -1,11 +1,11 @@
 <script lang="ts">
-const posters = new Map<string, { url: string; ratio: number }>()
+const posters = new Map<string, string>()
 </script>
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 
-const props = defineProps<{ src: string; naturalRatio?: boolean }>()
+const props = defineProps<{ src: string }>()
 const root = ref<HTMLElement>()
 const poster = ref(posters.get(props.src))
 const visible = ref(false)
@@ -32,19 +32,13 @@ onMounted(() => {
 
 onUnmounted(() => observer?.disconnect())
 
-function loadNativePoster(event: Event) {
-  const image = event.currentTarget as HTMLImageElement
-  rememberPoster(nativePoster, image.naturalWidth / image.naturalHeight)
-}
-
-function rememberPoster(url: string, ratio: number) {
+function rememberPoster(url: string) {
   if (posters.size >= 64) {
     const oldest = posters.keys().next().value
     if (oldest !== undefined) posters.delete(oldest)
   }
-  const result = { url, ratio }
-  posters.set(props.src, result)
-  poster.value = result
+  posters.set(props.src, url)
+  poster.value = url
 }
 
 function seekFrame(event: Event) {
@@ -59,7 +53,6 @@ function captureFrame(event: Event) {
   const video = event.currentTarget as HTMLVideoElement
   if (video.seeking || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return
   if (event.type === 'loadeddata' && sampleTime > 0 && video.currentTime < sampleTime) return
-  const ratio = video.videoWidth / video.videoHeight
   const scale = Math.min(1, 480 / Math.max(video.videoWidth, video.videoHeight))
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
@@ -68,7 +61,7 @@ function captureFrame(event: Event) {
     const context = canvas.getContext('2d')
     if (!context) return
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
-    rememberPoster(canvas.toDataURL('image/jpeg', 0.78), ratio)
+    rememberPoster(canvas.toDataURL('image/jpeg', 0.78))
   } catch {
     fallbackFrame.value = true
   }
@@ -76,10 +69,10 @@ function captureFrame(event: Event) {
 </script>
 
 <template>
-  <span ref="root" class="video-cover" :style="naturalRatio && poster ? { aspectRatio: String(poster.ratio) } : undefined">
-    <img v-if="poster" :src="poster.url" alt="" draggable="false">
+  <span ref="root" class="video-cover">
+    <img v-if="poster" :src="poster" alt="" draggable="false">
     <img v-else-if="visible && !nativeFailed" :src="nativePoster" alt="" draggable="false"
-      @load="loadNativePoster" @error="nativeFailed = true">
+      @load="rememberPoster(nativePoster)" @error="nativeFailed = true">
     <video v-else-if="visible" :src="src" :class="{ 'video-fallback-ready': fallbackFrame }" preload="auto" muted playsinline
       @loadedmetadata="seekFrame" @loadeddata="captureFrame" @seeked="captureFrame" />
     <span class="video-play-icon" aria-hidden="true">

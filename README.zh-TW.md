@@ -19,6 +19,14 @@
 
 ![Prompt Next](doc/assets/home.png)
 
+### 繪畫提示詞庫 · 卡片檢視
+
+<img src="doc/assets/art-cards.png" alt="繪畫提示詞庫的卡片檢視，顯示效果圖、標題、模型與編號" width="1080" />
+
+### 繪畫提示詞庫 · 瀑布流檢視
+
+<img src="doc/assets/art-masonry.png" alt="繪畫提示詞庫的瀑布流檢視，依不同高度排列效果圖" width="1080" />
+
 ## 功能
 
 | 功能 | 說明 |
@@ -59,6 +67,7 @@ prompt-next/
 | 文件 | 內容 |
 | --- | --- |
 | [簡體中文開發文件](doc/开发文档.md) | 需求、架構、資料和封裝 |
+| [V0.2.8 開發文件（簡體中文）](doc/V0.2.8开发文档.md) | 版本變更、資料遷移、驗收與發布 |
 | [簡體中文開發教學](doc/开发教程.md) | 環境安裝和動手練習 |
 
 採用 [MIT 授權](LICENSE)。桌面建置腳本源自 Wails 範本。 [Wails 授權聲明](licenses/Wails-MIT.txt)

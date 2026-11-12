@@ -9,8 +9,12 @@ import (
 )
 
 type DailyPromptCount struct {
-	Date  string `json:"date"`
-	Count int    `json:"count"`
+	Date    string `json:"date"`
+	Count   int    `json:"count"`
+	Text    int    `json:"text"`
+	Art     int    `json:"art"`
+	Video   int    `json:"video"`
+	Persona int    `json:"persona"`
 }
 
 type StorageStats struct {
@@ -29,6 +33,14 @@ func (s *Service) StorageStats() (StorageStats, error) {
 }
 
 func (s *Service) storageStatsAt(now time.Time) (StorageStats, error) {
+	return s.storageSnapshotAt(now, true)
+}
+
+func (s *Service) StorageSnapshot(includeMedia bool) (StorageStats, error) {
+	return s.storageSnapshotAt(time.Now(), includeMedia)
+}
+
+func (s *Service) storageSnapshotAt(now time.Time, includeMedia bool) (StorageStats, error) {
 	const days = 14
 	stats := StorageStats{Directory: s.store.dir, LocationWarning: s.locationWarning, RecentPrompts: make([]DailyPromptCount, days)}
 	dateIndex := make(map[string]int, days)
@@ -44,25 +56,39 @@ func (s *Service) storageStatsAt(now time.Time) (StorageStats, error) {
 			return stats, err
 		}
 	}
-	rows, err := s.store.db.Query("SELECT coalesce(json_extract(record, '$.createdAt'), '') FROM prompts")
+	rows, err := s.store.db.Query("SELECT kind, coalesce(json_extract(record, '$.createdAt'), '') FROM prompts")
 	if err != nil {
 		return stats, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var created string
-		if err := rows.Scan(&created); err != nil {
+		var kind, created string
+		if err := rows.Scan(&kind, &created); err != nil {
 			return stats, err
 		}
 		date, err := time.Parse(time.RFC3339Nano, normalizeDate(created, ""))
 		if err == nil {
 			if index, ok := dateIndex[date.In(now.Location()).Format(time.DateOnly)]; ok {
-				stats.RecentPrompts[index].Count++
+				day := &stats.RecentPrompts[index]
+				day.Count++
+				switch kind {
+				case "text":
+					day.Text++
+				case "art":
+					day.Art++
+				case "video":
+					day.Video++
+				case "persona":
+					day.Persona++
+				}
 			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return stats, err
+	}
+	if !includeMedia {
+		return stats, nil
 	}
 	err = s.store.walkImages(func(_ string, info fs.FileInfo) {
 		stats.ImageBytes += info.Size()

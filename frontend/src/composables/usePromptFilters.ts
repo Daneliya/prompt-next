@@ -11,6 +11,21 @@ export function countLabels(values: string[]) {
   return [...counts].map(([name, count]) => ({ name, count }))
 }
 
+const searchFields = new WeakMap<Prompt, string[]>()
+
+function searchableFields(item: Prompt) {
+  let fields = searchFields.get(item)
+  if (!fields) {
+    fields = [item.title, item.body, item.english, item.description, item.category, ...(item.tags ?? []),
+      item.negative, item.parameters, item.author, item.authorUrl, formatPromptNumber(item.number),
+      '#' + item.number, ...promptModels(item)]
+      .filter((value): value is string => typeof value === 'string')
+      .map(value => value.toLowerCase())
+    searchFields.set(item, fields)
+  }
+  return fields
+}
+
 export function usePromptFilters(items: Ref<Prompt[]>) {
   const sort = ref('updated')
   const modelFilter = ref<string | null>(null)
@@ -25,9 +40,7 @@ export function usePromptFilters(items: Ref<Prompt[]>) {
       (!category.value || item.category === category.value) &&
       (!modelFilter.value || promptModels(item).includes(modelFilter.value)) &&
       (!tagFilter.value || item.tags?.includes(tagFilter.value)) &&
-      [item.title, item.body, item.english, item.description, item.category, ...(item.tags ?? []),
-        item.negative, item.parameters, item.author, item.authorUrl, formatPromptNumber(item.number), '#' + item.number, ...promptModels(item)]
-        .some((value) => value?.toLowerCase().includes(keyword))
+      (!keyword || searchableFields(item).some(value => value.includes(keyword)))
     ).sort((a, b) => {
       if (sort.value === 'title') return a.title.localeCompare(b.title, 'zh-CN')
       if (sort.value === 'created') return b.createdAt.localeCompare(a.createdAt)

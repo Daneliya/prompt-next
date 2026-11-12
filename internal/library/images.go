@@ -418,3 +418,15 @@ func (s *Service) ImageDetails(number int64, names []string) []ImageDetail {
 	}
 	return details
 }
+
+// CoverDimensions reads headers for a bounded page before the gallery mounts it.
+func (s *Service) CoverDimensions(covers map[int64]string) map[int64]float64 {
+	ratios := make(map[int64]float64, len(covers))
+	for number, name := range covers {
+		details := s.ImageDetails(number, []string{name})
+		if len(details) != 0 && details[0].Width > 0 && details[0].Height > 0 {
+			ratios[number] = float64(details[0].Width) / float64(details[0].Height)
+		}
+	}
+	return ratios
+}

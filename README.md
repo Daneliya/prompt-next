@@ -21,6 +21,14 @@
 
 <img src="doc/assets/home.png" alt="Prompt Next 工作台首页，显示四个库、存储用量、新增提示词趋势和绘画分布图" width="1080" />
 
+### 绘画提示词库 · 卡片视图
+
+<img src="doc/assets/art-cards.png" alt="绘画提示词库的卡片视图，展示效果图、标题、模型与编号" width="1080" />
+
+### 绘画提示词库 · 瀑布流视图
+
+<img src="doc/assets/art-masonry.png" alt="绘画提示词库的瀑布流视图，按不同高度排列效果图" width="1080" />
+
 </div>
 
 ## 功能
@@ -64,6 +72,7 @@ prompt-next/
 | 文档 | 内容 |
 | --- | --- |
 | [开发文档](doc/开发文档.md) | 功能要求、工程分层、数据与发布。 |
+| [V0.2.8 开发文档](doc/V0.2.8开发文档.md) | 版本改动、数据迁移、验收与发布。 |
 | [开发教程](doc/开发教程.md) | 环境安装和动手练习。 |
 
 项目采用 [MIT 许可证](LICENSE)。桌面构建脚本源自 Wails 模板。 [Wails 许可声明](licenses/Wails-MIT.txt)

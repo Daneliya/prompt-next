@@ -16,6 +16,7 @@ type PromptCollection struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	PromptIDs   []string `json:"promptIds"`
+	UpdatedAt   string   `json:"updatedAt,omitempty"`
 }
 
 func decodeCollections(raw string) ([]PromptCollection, error) {
@@ -62,6 +63,7 @@ func (s *Service) SaveCollection(collection PromptCollection) (PromptCollection,
 		return PromptCollection{}, errors.New("合集名称须为 1 至 80 个字符")
 	}
 	collection.PromptIDs = cleanTags(collection.PromptIDs)
+	collection.UpdatedAt = timestamp()
 	err := s.updateCollections(func(tx *sql.Tx, collections []PromptCollection) ([]PromptCollection, error) {
 		index := slices.IndexFunc(collections, func(existing PromptCollection) bool { return existing.ID == collection.ID })
 		if collection.ID != "" && index < 0 {

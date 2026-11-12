@@ -78,7 +78,7 @@ func TestArtworkImagesAndPortableBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyItems := slices.DeleteFunc(items, func(item Prompt) bool { return item.Kind == "text" || item.Kind == "video" })
-	backup, err := s.store.encodeArchive(legacyItems, nil, false)
+	backup, err := s.store.encodeArchive(legacyItems, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

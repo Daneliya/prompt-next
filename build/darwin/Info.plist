@@ -8,9 +8,9 @@
         <key>CFBundleDisplayName</key>
             <string>Prompt Next</string>
         <key>CFBundleExecutable</key>
-            <string>prompt-manager</string>
+            <string>prompt-next</string>
         <key>CFBundleIdentifier</key>
-            <string>com.daneliya.promptmanager</string>
+            <string>com.daneliya.promptnext</string>
         <key>CFBundleVersion</key>
             <string>{{APP_VERSION}}</string>
         <key>CFBundleGetInfoString</key>

@@ -15,7 +15,8 @@ import (
 	"github.com/Daneliya/prompt-next/internal/fileio"
 )
 
-const backupFormat = "bigfish-prompt-manager"
+const backupFormat = "prompt-next"
+const legacyBackupFormat = "bigfish-prompt-manager"
 
 type ImportSummary struct {
 	Added         int    `json:"added"`
@@ -34,6 +35,7 @@ type backupFile struct {
 	Images   map[string][]byte  `json:"images,omitempty"`
 	Videos   map[string][]byte  `json:"videos,omitempty"`
 	Settings *map[string]string `json:"settings,omitempty"`
+	Authors  *[]Author          `json:"authors,omitempty"`
 	Partial  bool               `json:"partial,omitempty"`
 }
 
@@ -78,7 +80,7 @@ func (s *Service) export(ids []string) ([]byte, error) {
 	if len(selected) != len(wanted) {
 		return nil, errors.New("部分条目已不存在，请刷新列表")
 	}
-	return s.store.encodeArchive(selected, nil, true)
+	return s.store.encodeArchive(selected, nil, nil, true)
 }
 
 const MaxBackupBytes = 128 << 20
@@ -100,10 +102,14 @@ func (s *promptStore) snapshot(tx *sql.Tx, items []Prompt) ([]byte, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return s.encodeArchive(items, &settings, false)
+	authors, err := listAuthors(tx)
+	if err != nil {
+		return nil, err
+	}
+	return s.encodeArchive(items, &settings, &authors, false)
 }
 
-func (s *promptStore) encodeArchive(items []Prompt, settings *map[string]string, partial bool) ([]byte, error) {
+func (s *promptStore) encodeArchive(items []Prompt, settings *map[string]string, authors *[]Author, partial bool) ([]byte, error) {
 	images := map[string][]byte{}
 	videos := map[string][]byte{}
 	size := 0
@@ -160,7 +166,7 @@ func (s *promptStore) encodeArchive(items []Prompt, settings *map[string]string,
 	if hasReferences {
 		version = 8
 	}
-	data, err := json.Marshal(backupFile{Format: backupFormat, Version: version, Items: items, Images: images, Videos: videos, Settings: settings, Partial: partial})
+	data, err := json.Marshal(backupFile{Format: backupFormat, Version: version, Items: items, Images: images, Videos: videos, Settings: settings, Authors: authors, Partial: partial})
 	if len(data) > MaxBackupBytes {
 		return nil, errors.New("超出 128 MB JSON 备份上限，请备份整个应用数据目录")
 	}
@@ -222,6 +228,7 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 		Favorites []string           `json:"favorites"`
 		Partial   bool               `json:"partial"`
 		Settings  *map[string]string `json:"settings"`
+		Authors   []Author           `json:"authors"`
 	}
 	text = strings.TrimSpace(strings.TrimPrefix(text, "\ufeff"))
 	var err error
@@ -233,11 +240,17 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 	if err != nil || envelope.Items == nil {
 		return nil, ImportSummary{}, errors.New("文件不是可识别的提示词 JSON")
 	}
-	if (envelope.Format != "" && envelope.Format != backupFormat) ||
-		(envelope.Format == backupFormat && (envelope.Version < 1 || envelope.Version > 8)) {
+	isBackup := envelope.Format == backupFormat || envelope.Format == legacyBackupFormat
+	if (envelope.Format != "" && !isBackup) ||
+		(isBackup && (envelope.Version < 1 || envelope.Version > 8)) {
 		return nil, ImportSummary{}, errors.New("不支持该备份格式或版本")
 	}
-	if envelope.Format == backupFormat && envelope.Version >= 3 && !envelope.Partial {
+	for _, author := range envelope.Authors {
+		if err := author.validate(); err != nil {
+			return nil, ImportSummary{}, err
+		}
+	}
+	if isBackup && envelope.Version >= 3 && !envelope.Partial {
 		if envelope.Settings == nil {
 			return nil, ImportSummary{}, errors.New("备份缺少设置")
 		}
@@ -256,7 +269,7 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 	invalid := 0
 	for _, raw := range envelope.Items {
 		var p Prompt
-		if envelope.Format == backupFormat {
+		if isBackup {
 			err = json.Unmarshal(raw, &p)
 		} else {
 			p, err = legacyPrompt(raw, favorites)
@@ -269,7 +282,7 @@ func decodeImport(text string) ([]Prompt, ImportSummary, error) {
 		p.UpdatedAt = normalizeDate(p.UpdatedAt, p.CreatedAt)
 		items = append(items, p)
 	}
-	return items, ImportSummary{Invalid: invalid, IncludesText: envelope.Version >= 4, IncludesVideo: envelope.Version >= 5, CanRestore: envelope.Format == backupFormat && !envelope.Partial && invalid == 0}, nil
+	return items, ImportSummary{Invalid: invalid, IncludesText: envelope.Version >= 4, IncludesVideo: envelope.Version >= 5, CanRestore: isBackup && !envelope.Partial && invalid == 0}, nil
 }
 
 func validateBackupSetting(key, value string) error {
@@ -376,6 +389,17 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 		return summary, err
 	}
 	defer tx.Rollback()
+	var archive struct {
+		Version  int               `json:"version"`
+		Settings map[string]string `json:"settings"`
+		Authors  *[]Author         `json:"authors"`
+	}
+	jsonText := strings.TrimSpace(strings.TrimPrefix(text, "\ufeff"))
+	if strings.HasPrefix(jsonText, "{") {
+		if err := json.Unmarshal([]byte(jsonText), &archive); err != nil {
+			return summary, err
+		}
+	}
 	if replace {
 		if !summary.CanRestore {
 			return ImportSummary{}, errors.New("只有完整的应用备份可以用于覆盖恢复")
@@ -403,13 +427,6 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 		if err := fileio.WriteAtomic(summary.Snapshot, snapshot); err != nil {
 			return summary, err
 		}
-		var archive struct {
-			Version  int               `json:"version"`
-			Settings map[string]string `json:"settings"`
-		}
-		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(text, "\ufeff"))), &archive); err != nil {
-			return summary, err
-		}
 		if archive.Version >= 3 {
 			if err := restoreSettings(tx, archive.Settings, summary.IncludesText, summary.IncludesVideo); err != nil {
 				return summary, err
@@ -418,6 +435,22 @@ func (s *Service) ImportPrompts(text string, replace bool) (ImportSummary, error
 
 		if _, err := tx.Exec("DELETE FROM prompts WHERE (kind != 'text' OR ?) AND (kind != 'video' OR ?)", summary.IncludesText, summary.IncludesVideo); err != nil {
 			return ImportSummary{}, err
+		}
+	}
+	if archive.Authors != nil {
+		if replace {
+			if _, err := tx.Exec("DELETE FROM authors"); err != nil {
+				return summary, err
+			}
+		}
+		for _, author := range *archive.Authors {
+			if err := author.validate(); err != nil {
+				return summary, err
+			}
+			if _, err := tx.Exec(`INSERT INTO authors(source_name, name, bio) VALUES (?, ?, ?)
+				ON CONFLICT(source_name) DO NOTHING`, author.SourceName, author.Name, author.Bio); err != nil {
+				return summary, err
+			}
 		}
 	}
 	for _, item := range incoming {
@@ -481,7 +514,7 @@ func Markdown(p Prompt) ([]byte, error) {
 	sections := []string{"# " + p.Title}
 	for _, field := range []struct{ label, value string }{
 		{"说明", p.Description}, {"分类", p.Category}, {"标签", strings.Join(p.Tags, "、")},
-		{"原作者", p.Author}, {"原作者链接", p.AuthorURL}, {"平台或模型", strings.Join(p.Models, "、")}, {"参数备注", p.Parameters},
+		{"原作者", p.Author}, {"提示词原链接", p.AuthorURL}, {"平台或模型", strings.Join(p.Models, "、")}, {"参数备注", p.Parameters},
 		{label, p.Body}, {"英文提示词", p.English}, {"负向提示词", p.Negative},
 	} {
 		if strings.TrimSpace(field.value) != "" {

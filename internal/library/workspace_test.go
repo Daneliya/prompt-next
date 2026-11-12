@@ -34,7 +34,7 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 		source.SetTheme("dark"), source.SetLayout("list"), source.AddCategory("art", "海报"),
 		source.AddModel("art", "测试模型"), source.AddModel("video", "测试视频模型"), source.SetVariablePreset("sample-art", "霓虹", map[string]string{"主色调": "青色"}),
 		source.SetViewFields("cards", []string{"title", "body"}),
-		source.SetViewFields("persona:cards", []string{"title", "characters", "updated"}),
+		source.SetViewFields("persona:cards", []string{"title", "characters", "updated", "author"}),
 		dest.SetTheme("light"), dest.AddModel("art", "旧模型"), dest.AddModel("video", "旧视频模型"),
 	} {
 		if err != nil {
@@ -70,7 +70,7 @@ func TestBackupRestoresSettingsAndSavesSafetySnapshot(t *testing.T) {
 		t.Fatalf("shared card fields = %v, %v", cards, err)
 	}
 	persona, err := dest.ViewFields("persona:cards")
-	if err != nil || !slices.Equal(persona, []string{"title", "characters", "updated"}) {
+	if err != nil || !slices.Equal(persona, []string{"title", "characters", "updated", "author"}) {
 		t.Fatalf("persona card fields = %v, %v", persona, err)
 	}
 	snapshot, err := os.ReadFile(result.Snapshot)
@@ -167,6 +167,9 @@ func TestMigrateExistingWorkspace(t *testing.T) {
 	if err := initialSchema(tx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(`UPDATE prompts SET record = json_set(record, '$.author', '旧作者') WHERE id = 'sample-art'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec("PRAGMA user_version=1"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +181,10 @@ func TestMigrateExistingWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := testLibrary(t, dir)
+	authors, err := s.ListAuthors()
+	if err != nil || !slices.Equal(authors, []Author{{SourceName: "旧作者", Name: "旧作者"}}) {
+		t.Fatalf("migrated authors = %+v, %v", authors, err)
+	}
 	catalog, err := s.Models("art")
 	models := catalog.Custom
 	if err != nil || !slices.Equal(models, []string{"旧模型"}) {
@@ -188,7 +195,7 @@ func TestMigrateExistingWorkspace(t *testing.T) {
 		t.Fatalf("busy_timeout = %d, %v", timeout, err)
 	}
 	var version int
-	if err := s.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 6 {
+	if err := s.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
 		t.Fatalf("user_version = %d, %v", version, err)
 	}
 }
@@ -454,7 +461,7 @@ func TestPromptCollectionsRestoreAndUndo(t *testing.T) {
 	collection, err := source.SaveCollection(PromptCollection{
 		Name: "雨夜变体", Description: "测试合集说明", PromptIDs: []string{"sample-art", "sample-persona", "sample-art"},
 	})
-	if err != nil || collection.ID == "" || !slices.Equal(collection.PromptIDs, []string{"sample-art", "sample-persona"}) {
+	if err != nil || collection.ID == "" || collection.UpdatedAt == "" || !slices.Equal(collection.PromptIDs, []string{"sample-art", "sample-persona"}) {
 		t.Fatalf("saved collection = %+v, %v", collection, err)
 	}
 	if _, err := source.SaveCollection(PromptCollection{Name: "无效", PromptIDs: []string{"missing"}}); err == nil {
@@ -465,7 +472,9 @@ func TestPromptCollectionsRestoreAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	collection.Name = "雨夜系列"
-	if _, err := source.SaveCollection(collection); err != nil {
+	slices.Reverse(collection.PromptIDs)
+	collection, err = source.SaveCollection(collection)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := source.UndoDelete(batch); err != nil {
@@ -481,7 +490,7 @@ func TestPromptCollectionsRestoreAndUndo(t *testing.T) {
 	}
 	collections, err := dest.ListCollections()
 	if err != nil || len(collections) != 1 || collections[0].Name != collection.Name || collections[0].Description != collection.Description ||
-		!slices.Equal(collections[0].PromptIDs, collection.PromptIDs) {
+		collections[0].UpdatedAt != collection.UpdatedAt || !slices.Equal(collections[0].PromptIDs, collection.PromptIDs) {
 		t.Fatalf("restored collections = %+v, %v", collections, err)
 	}
 	if err := dest.DeleteCollection(collection.ID); err != nil {
@@ -584,8 +593,8 @@ func TestEditableDatesAndRecentPromptCounts(t *testing.T) {
 	}
 	stats, err := s.storageStatsAt(today)
 	if err != nil || len(stats.RecentPrompts) != 14 ||
-		stats.RecentPrompts[12] != (DailyPromptCount{Date: "2031-06-13", Count: 3}) ||
-		stats.RecentPrompts[13] != (DailyPromptCount{Date: "2031-06-14", Count: 1}) {
+		stats.RecentPrompts[12] != (DailyPromptCount{Date: "2031-06-13", Count: 3, Text: 1, Art: 1, Video: 1}) ||
+		stats.RecentPrompts[13] != (DailyPromptCount{Date: "2031-06-14", Count: 1, Persona: 1}) {
 		t.Fatalf("recent prompts = %+v, %v", stats.RecentPrompts, err)
 	}
 	saved.CreatedAt, saved.UpdatedAt = "", ""
@@ -629,5 +638,93 @@ func TestModelCatalogsAreIndependent(t *testing.T) {
 	video, err = s.Models("video")
 	if err != nil || !slices.Equal(video.Custom, []string{"Custom Video"}) {
 		t.Fatalf("video custom model = %+v, %v", video, err)
+	}
+}
+
+func TestAuthorProfilesKeepPromptSourcesAndSurviveRestore(t *testing.T) {
+	source := testLibrary(t, t.TempDir())
+	for _, kind := range []string{"text", "art", "video", "persona"} {
+		_, err := source.SavePrompt(Prompt{
+			Kind: kind, Title: kind, Body: "正文", Author: " 同一作者 ",
+			AuthorURL: "https://example.com/prompts/" + kind,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := Author{SourceName: "同一作者", Name: "显示名称", Bio: "作者简介"}
+	if _, err := source.SaveAuthor(want); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := BackupJSON(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := testLibrary(t, t.TempDir())
+	if _, err := dest.ImportPrompts(string(backup), true); err != nil {
+		t.Fatal(err)
+	}
+	authors, err := dest.ListAuthors()
+	if err != nil || !slices.Equal(authors, []Author{want}) {
+		t.Fatalf("restored author profiles: %+v, %v", authors, err)
+	}
+	items, err := dest.ListPrompts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, item := range items {
+		if item.Author != want.SourceName {
+			continue
+		}
+		count++
+		if item.AuthorURL != "https://example.com/prompts/"+item.Kind {
+			t.Fatalf("source link changed for %s: %s", item.Kind, item.AuthorURL)
+		}
+	}
+	if count != 4 {
+		t.Fatalf("linked prompts = %d, want 4", count)
+	}
+}
+
+func TestTargetedPromptQueriesAndStatsWithoutMedia(t *testing.T) {
+	s := testLibrary(t, t.TempDir())
+	saved, err := s.SavePrompt(Prompt{Kind: "text", Title: "查询样例", Body: "正文"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind, err := s.ListPromptsByKind("text")
+	if err != nil || !slices.ContainsFunc(byKind, func(p Prompt) bool { return p.ID == saved.ID }) {
+		t.Fatalf("query by kind = %+v, %v", byKind, err)
+	}
+	for _, item := range byKind {
+		if item.Kind != "text" {
+			t.Fatalf("unexpected kind: %s", item.Kind)
+		}
+	}
+	byID, err := s.PromptsByIDs([]string{saved.ID, "missing", saved.ID})
+	if err != nil || len(byID) != 1 || byID[0].ID != saved.ID {
+		t.Fatalf("query by ID = %+v, %v", byID, err)
+	}
+	var cover bytes.Buffer
+	if err := png.Encode(&cover, image.NewRGBA(image.Rect(0, 0, 16, 8))); err != nil {
+		t.Fatal(err)
+	}
+	name, err := checkedImage(cover.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.writeImage(scopedImage(saved.Number, name), cover.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if ratio := s.CoverDimensions(map[int64]string{saved.Number: name})[saved.Number]; ratio != 2 {
+		t.Fatalf("cover ratio = %v", ratio)
+	}
+	snapshot, err := s.StorageSnapshot(false)
+	if err != nil || snapshot.DBBytes == 0 || snapshot.ImageBytes != 0 {
+		t.Fatalf("snapshot without media = %+v, %v", snapshot, err)
+	}
+	if full, err := s.StorageSnapshot(true); err != nil || full.ImageFiles != 1 || full.ImageBytes != int64(cover.Len()) {
+		t.Fatalf("full media snapshot = %+v, %v", full, err)
 	}
 }

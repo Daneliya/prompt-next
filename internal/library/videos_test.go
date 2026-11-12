@@ -144,7 +144,7 @@ func TestLegacySingleVideoRecordAndBackup(t *testing.T) {
 	check(source)
 	settings := map[string]string{}
 	backup, err := json.Marshal(backupFile{
-		Format: backupFormat, Version: 6, Settings: &settings, Items: []Prompt{legacy},
+		Format: legacyBackupFormat, Version: 6, Settings: &settings, Items: []Prompt{legacy},
 		Videos: map[string][]byte{legacy.Video: data},
 	})
 	if err != nil {

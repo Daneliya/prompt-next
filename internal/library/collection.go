@@ -122,14 +122,11 @@ func (s *Service) RenameTag(kind, current, name string) error {
 		return err
 	}
 	defer tx.Rollback()
-	items, err := listPrompts(tx)
+	items, err := queryPrompts(tx, " WHERE p.kind = ? AND EXISTS (SELECT 1 FROM json_each(p.record, '$.tags') WHERE value = ?)", kind, current)
 	if err != nil {
 		return err
 	}
 	for _, item := range items {
-		if item.Kind != kind || !slices.Contains(item.Tags, current) {
-			continue
-		}
 		for i, tag := range item.Tags {
 			if tag == current || strings.EqualFold(tag, name) {
 				item.Tags[i] = name

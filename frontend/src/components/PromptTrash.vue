@@ -28,7 +28,10 @@ watch(() => props.show, show => { if (!show) checked.value = [] })
   <NModal :show="show" preset="card" :title="t('回收站')" class="app-modal trash-modal"
     :mask-closable="!busy" :close-on-esc="!busy" :closable="!busy" @update:show="emit('close')">
     <p>{{ t('删除后的提示词保留 24 小时。恢复后会回到原来的库。') }}</p>
-    <p v-if="!entries.length" class="trash-empty">{{ t('回收站为空') }}</p>
+    <div v-if="!entries.length" class="trash-empty guided-empty">
+      <strong>{{ t('回收站为空') }}</strong>
+      <p>{{ t('删除的提示词会在这里保留 24 小时。') }}</p>
+    </div>
     <NCheckboxGroup v-else v-model:value="checked" :disabled="busy" class="trash-list">
       <div v-for="entry in entries" :key="key(entry)" class="trash-entry">
         <NCheckbox :value="key(entry)" :aria-label="t('选择 ') + entry.title" />

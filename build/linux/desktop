@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
 Name=My Product
-Comment=A prompt-manager application
+Comment=Prompt Next
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/prompt-manager %u
+Exec=/usr/local/bin/prompt-next %u
 Terminal=false
 Type=Application
-Icon=prompt-manager
+Icon=prompt-next
 Categories=Utility;
-StartupWMClass=prompt-manager
+StartupWMClass=prompt-next
 
  

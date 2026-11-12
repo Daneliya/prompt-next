@@ -16,6 +16,9 @@ defineProps<{ name: string }>()
       <path d="M6 12C9 7 13 6 16.5 8 19 9 21 11 21 12s-2 3-4.5 4C13 18 9 17 6 12Zm0 0-3.5-3v6L6 12Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
       <circle cx="16.5" cy="11" r="1" fill="currentColor"/>
     </template>
+    <path v-else-if="name === 'star' || name === 'star-outline'"
+      d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.6l6.2-.9L12 3Z"
+      :fill="name === 'star' ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
     <template v-else-if="name === 'persona'">
       <circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <path d="M4 20v-1a8 5 0 0 1 16 0v1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
@@ -58,6 +61,22 @@ defineProps<{ name: string }>()
     <template v-else-if="name === 'search'">
       <circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
       <path d="m15 15 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </template>
+    <template v-else-if="name === 'import' || name === 'backup'">
+      <path d="M4 15v4h16v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path :d="name === 'import' ? 'M12 4v10m-4-4 4 4 4-4' : 'M12 14V4M8 8l4-4 4 4'"
+        fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </template>
+    <template v-else-if="name === 'window-restore'">
+      <path d="M5 8h11v11H5zM8 8V5h11v11h-3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </template>
+    <template v-else-if="name === 'window-minimise' || name === 'window-maximise' || name === 'window-close'">
+      <path :d="name === 'window-minimise' ? 'M5 12h14' : name === 'window-maximise' ? 'M5 5h14v14H5z' : 'm5 5 14 14M19 5 5 19'"
+        fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </template>
+    <template v-else-if="name === 'keyboard'">
+      <rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M7 10h.1M12 10h.1M17 10h.1M7 14h.1M10 14h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
     </template>
     <template v-else-if="name === 'settings'">
       <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/>

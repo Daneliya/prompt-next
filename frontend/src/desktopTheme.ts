@@ -1,9 +1,8 @@
+import { accentTokens } from './designTokens'
 import type { GlobalThemeOverrides } from 'naive-ui'
 
 export function desktopTheme(dark: boolean): GlobalThemeOverrides {
-  const accent = dark ? '#f08578' : '#ba3c32'
-  const hover = dark ? '#f5a095' : '#a5332b'
-  const pressed = dark ? '#df6d5f' : '#8e2c25'
+  const { accent, hover, pressed, focus } = accentTokens(dark)
   return {
     common: {
       primaryColor: accent,
@@ -23,7 +22,7 @@ export function desktopTheme(dark: boolean): GlobalThemeOverrides {
       inputColorDisabled: dark ? '#262930' : '#f6f7f9',
     },
     Input: {
-      boxShadowFocus: dark ? '0 0 0 2px #f0857829' : '0 0 0 2px #ba3c3220',
+      boxShadowFocus: '0 0 0 2px ' + focus,
     },
   }
 }

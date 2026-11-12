@@ -69,7 +69,7 @@ func (s *promptStore) migrate() error {
 		var err error
 		migratedImages, err = s.addPromptNumbers(tx)
 		return err
-	}, addTextLibrary, addVideoLibrary, addLibraryExamples}
+	}, addTextLibrary, addVideoLibrary, addLibraryExamples, addAuthors}
 	if version < 0 || version > len(migrations) {
 		return fmt.Errorf("数据库版本 %d 高于当前应用支持的版本", version)
 	}
@@ -222,10 +222,16 @@ func (s *promptStore) list() ([]Prompt, error) {
 	return listPrompts(s.db)
 }
 
-func listPrompts(db interface {
+type promptQuery interface {
 	Query(string, ...any) (*sql.Rows, error)
-}) ([]Prompt, error) {
-	rows, err := db.Query("SELECT p.record, n.number FROM prompts p JOIN prompt_numbers n ON n.prompt_id = p.id ORDER BY p.updated_at DESC, p.id")
+}
+
+func listPrompts(db promptQuery) ([]Prompt, error) {
+	return queryPrompts(db, "")
+}
+
+func queryPrompts(db promptQuery, where string, args ...any) ([]Prompt, error) {
+	rows, err := db.Query("SELECT p.record, n.number FROM prompts p JOIN prompt_numbers n ON n.prompt_id = p.id"+where+" ORDER BY p.updated_at DESC, p.id", args...)
 	if err != nil {
 		return nil, err
 	}

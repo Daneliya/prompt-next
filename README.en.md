@@ -19,6 +19,14 @@
 
 ![Prompt Next](doc/assets/home.png)
 
+### Artwork Library · Card View
+
+<img src="doc/assets/art-cards.png" alt="Artwork library cards showing result images, titles, models, and prompt IDs" width="1080" />
+
+### Artwork Library · Masonry View
+
+<img src="doc/assets/art-masonry.png" alt="Artwork library masonry layout showing result images at varying heights" width="1080" />
+
 ## Features
 
 | Feature | Description |
@@ -59,6 +67,7 @@ prompt-next/
 | Document | Contents |
 | --- | --- |
 | [Development guide in Simplified Chinese](doc/开发文档.md) | Requirements, architecture, data, and packaging |
+| [V0.2.8 development notes (Simplified Chinese)](doc/V0.2.8开发文档.md) | Changes, data migration, verification, and release steps |
 | [Hands-on tutorial in Simplified Chinese](doc/开发教程.md) | Setup and exercises |
 
 [MIT licensed](LICENSE). The desktop build scaffolding is derived from the Wails template. [Wails license notice](licenses/Wails-MIT.txt)

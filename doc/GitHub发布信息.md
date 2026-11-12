@@ -6,7 +6,7 @@
 | Repository name | `prompt-next` |
 | Visibility | Public |
 | License | MIT，项目已带 `LICENSE` |
-| Topics | `prompt-manager`、`ai-art`、`desktop-app`、`wails`、`vue`、`golang`、`sqlite`、`local-first` |
+| Topics | `prompt-next`、`ai-art`、`desktop-app`、`wails`、`vue`、`golang`、`sqlite`、`local-first` |
 
 ## 英文 Description
 

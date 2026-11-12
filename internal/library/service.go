@@ -36,6 +36,14 @@ func (s *Service) ListPrompts() ([]Prompt, error) {
 	return s.store.list()
 }
 
+func (s *Service) ListPromptsByKind(kind string) ([]Prompt, error) {
+	return queryPrompts(s.store.db, " WHERE p.kind = ?", kind)
+}
+
+func (s *Service) PromptsByIDs(ids []string) ([]Prompt, error) {
+	return queryPrompts(s.store.db, " WHERE p.id IN (SELECT value FROM json_each(?))", stringsJSON(ids))
+}
+
 func (s *Service) SavePrompt(prompt Prompt) (Prompt, error) {
 	return s.SaveWithImages(prompt, nil)
 }

@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  APP_NAME: "prompt-manager"
+  APP_NAME: "prompt-next"
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
@@ -68,15 +68,17 @@ tasks:
       - task: common:run:docker
 
   test:
-    summary: Runs Go tests against the production frontend assets
+    summary: Runs frontend and Go tests
     deps: [verify:frontend]
     cmds:
+      - npm --prefix frontend test
       - go test ./...
 
   lint:
-    summary: Runs TypeScript checks and go vet
+    summary: Runs ESLint, TypeScript checks and go vet
     deps: [verify:frontend]
     cmds:
+      - npm --prefix frontend run lint
       - go vet ./...
 
   verify:frontend:

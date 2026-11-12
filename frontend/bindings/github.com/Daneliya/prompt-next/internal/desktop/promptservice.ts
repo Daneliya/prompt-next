@@ -65,6 +65,13 @@ export function CopyText(text: string): $CancellablePromise<void> {
     return $Call.ByID(213585890, text);
 }
 
+/**
+ * CoverDimensions reads headers for a bounded page before the gallery mounts it.
+ */
+export function CoverDimensions(covers: { [_ in `${number}`]?: string } | null): $CancellablePromise<{ [_ in `${number}`]?: number } | null> {
+    return $Call.ByID(1564475734, covers);
+}
+
 export function CustomCategories(kind: string): $CancellablePromise<string[] | null> {
     return $Call.ByID(245176603, kind);
 }
@@ -141,12 +148,20 @@ export function ImportPrompts(text: string, replace: boolean): $CancellablePromi
     return $Call.ByID(1428729236, text, replace);
 }
 
+export function ListAuthors(): $CancellablePromise<library$0.Author[] | null> {
+    return $Call.ByID(2728721204);
+}
+
 export function ListCollections(): $CancellablePromise<library$0.PromptCollection[] | null> {
     return $Call.ByID(2014573233);
 }
 
 export function ListPrompts(): $CancellablePromise<library$0.Prompt[] | null> {
     return $Call.ByID(4062881123);
+}
+
+export function ListPromptsByKind(kind: string): $CancellablePromise<library$0.Prompt[] | null> {
+    return $Call.ByID(4274620944, kind);
 }
 
 export function ListTrash(): $CancellablePromise<library$0.TrashEntry[] | null> {
@@ -181,6 +196,10 @@ export function PreviewImport(text: string): $CancellablePromise<library$0.Impor
     return $Call.ByID(1161926837, text);
 }
 
+export function PromptsByIDs(ids: string[] | null): $CancellablePromise<library$0.Prompt[] | null> {
+    return $Call.ByID(2292615944, ids);
+}
+
 export function RecentDeleteBatch(): $CancellablePromise<string> {
     return $Call.ByID(1983568988);
 }
@@ -203,6 +222,10 @@ export function ResetDataFolder(): $CancellablePromise<boolean> {
 
 export function RestoreTrash(refs: library$0.TrashRef[] | null): $CancellablePromise<number> {
     return $Call.ByID(4127835708, refs);
+}
+
+export function SaveAuthor(author: library$0.Author): $CancellablePromise<library$0.Author> {
+    return $Call.ByID(2297556258, author);
 }
 
 export function SaveCollection(collection: library$0.PromptCollection): $CancellablePromise<library$0.PromptCollection> {
@@ -251,6 +274,10 @@ export function SetViewFields(layout: string, fields: string[] | null): $Cancell
 
 export function StageImageUpload(id: string, encoded: string): $CancellablePromise<void> {
     return $Call.ByID(2725715906, id, encoded);
+}
+
+export function StorageSnapshot(includeMedia: boolean): $CancellablePromise<library$0.StorageStats> {
+    return $Call.ByID(93242765, includeMedia);
 }
 
 export function StorageStats(): $CancellablePromise<library$0.StorageStats> {
